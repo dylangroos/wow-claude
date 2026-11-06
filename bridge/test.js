@@ -1,0 +1,238 @@
+#!/usr/bin/env node
+// Offline end-to-end test: fake WoW folder + fake Claude + rendered strip
+// screenshots, no game needed.
+//   node test.js
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const zlib = require('zlib');
+const assert = require('assert');
+const { execFileSync } = require('child_process');
+
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cb-test-'));
+process.env.CB_CONFIG = path.join(tmp, 'config.json');
+process.env.CB_STATE = path.join(tmp, 'state.json');
+
+const P = require('./protocol');
+const { setup } = require('./setup');
+const { Bridge, readImage } = require('./bridge');
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function waitFor(fn, ms = 8000) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) { if (fn()) return; await sleep(50); }
+  throw new Error('timed out waiting');
+}
+
+// Render a strip onto a gray "game" background, like the addon does.
+// levels: what each 2-bit level becomes on screen (simulates gamma/brightness).
+function renderScreen(payload, { w = 1920, h = 1080, levels = P.LEVEL_RGB } = {}) {
+  const data = Buffer.alloc(w * h * 3, 60);
+  const width = Math.floor(w / P.BLOCK);
+  P.encodeStrip(payload, width).forEach((s, i) => {
+    const rgb = [Math.floor(s / 16), Math.floor(s / 4) % 4, s % 4].map((l) => levels[l]);
+    const bx = (i % width) * P.BLOCK;
+    const by = Math.floor(i / width) * P.BLOCK;
+    for (let y = by; y < by + P.BLOCK; y++) {
+      for (let x = bx; x < bx + P.BLOCK; x++) data.set(rgb, (y * w + x) * 3);
+    }
+  });
+  return { width: w, height: h, channels: 3, data };
+}
+
+function writeTga(img, file) {
+  const head = Buffer.alloc(18);
+  head[2] = 2;
+  head.writeUInt16LE(img.width, 12);
+  head.writeUInt16LE(img.height, 14);
+  head[16] = 24;                    // bottom-left origin, like most TGA writers
+  const body = Buffer.alloc(img.width * img.height * 3);
+  for (let y = 0; y < img.height; y++) {
+    for (let x = 0; x < img.width; x++) {
+      const s = (y * img.width + x) * 3;
+      const d = ((img.height - 1 - y) * img.width + x) * 3;
+      body[d] = img.data[s + 2]; body[d + 1] = img.data[s + 1]; body[d + 2] = img.data[s];
+    }
+  }
+  fs.writeFileSync(file, Buffer.concat([head, body]));
+}
+
+function crc32(buf) {
+  let c, crc = 0xffffffff;
+  for (const b of buf) {
+    c = (crc ^ b) & 0xff;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    crc = (crc >>> 8) ^ c;
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function writePng(img, file) {
+  const chunk = (type, body) => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(body.length);
+    const tb = Buffer.concat([Buffer.from(type, 'ascii'), body]);
+    const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(tb));
+    return Buffer.concat([len, tb, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(img.width, 0); ihdr.writeUInt32BE(img.height, 4);
+  ihdr[8] = 8; ihdr[9] = 2;
+  const stride = img.width * 3;
+  const raw = Buffer.alloc((stride + 1) * img.height);
+  for (let y = 0; y < img.height; y++) img.data.copy(raw, y * (stride + 1) + 1, y * stride, (y + 1) * stride);
+  fs.writeFileSync(file, Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0)),
+  ]));
+}
+
+function pngToJpeg(png, jpg) {
+  const script = 'Add-Type -AssemblyName System.Drawing; $i = [System.Drawing.Image]::FromFile($env:CB_IN); $i.Save($env:CB_OUT, [System.Drawing.Imaging.ImageFormat]::Jpeg); $i.Dispose()';
+  execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    windowsHide: true,
+    env: { ...process.env, CB_IN: png, CB_OUT: jpg },
+  });
+}
+
+// --- codec unit checks ---
+const bytes = [0, 1, 2, 250, 255, 128, 7];
+assert.deepStrictEqual(P.symbolsToBytes(P.bytesToSymbols(bytes), bytes.length), bytes);
+assert.strictEqual(P.decodeStrip(renderScreen('abc123|hello')), 'abc123|hello');
+const long = 'abc123|' + 'how do i frost nova pull a whole camp of murlocs? '.repeat(24) + 'ünïcødé ✓';
+assert.strictEqual(P.decodeStrip(renderScreen(long)), long);
+assert.strictEqual(P.decodeStrip(renderScreen('abc123|gamma', { levels: [18, 70, 150, 228] })), 'abc123|gamma');
+assert.strictEqual(P.decodeStrip({ width: 1920, height: 1080, channels: 3, data: Buffer.alloc(1920 * 1080 * 3, 90) }), null);
+// Flip one block's color: the checksum must reject it.
+const bad = renderScreen('abc123|hello');
+for (let y = 0; y < P.BLOCK; y++) for (let x = 12 * 16; x < 13 * 16; x++) bad.data[(y * 1920 + x) * 3] ^= 255;
+assert.strictEqual(P.decodeStrip(bad), null);
+assert.strictEqual(P.luaLongString('a]=]b'), '[==[\na]=]b]==]');
+assert.strictEqual(P.luaLongString('ends in ]='), '[==[\nends in ]=]==]');
+assert.strictEqual(P.cleanForWow('**bold** |cff'), 'bold ||cff');
+assert.strictEqual(P.cleanForWow('see [Blizzard](https://x.com/a_(b)) now'), 'see Blizzard now');
+
+// Payloads with and without the character-info block.
+const G = P.CTX_SEP;
+assert.deepStrictEqual(P.parsePayload('abc123|hi'), { id: 'abc123', text: 'hi', ctx: [] });
+assert.deepStrictEqual(P.parsePayload(`abc123|${G}char\tBob, level 11 Human Mage\nzone\tElwynn Forest${G}where now?`),
+  { id: 'abc123', text: 'where now?', ctx: [['char', 'Bob, level 11 Human Mage'], ['zone', 'Elwynn Forest']] });
+assert.strictEqual(P.parsePayload('nope'), null);
+assert.strictEqual(P.buildPrompt('hi', []), 'hi');
+assert.match(P.buildPrompt('where now?', [['zone', 'Elwynn Forest']]), /^\[Game state[^\n]*\]\nLocation: Elwynn Forest\n\n\[Question\]\nwhere now\?$/);
+
+// File formats (JPEG goes through the same Windows conversion the bridge uses).
+const formats = path.join(tmp, 'formats');
+fs.mkdirSync(formats);
+const img = renderScreen('fff000|format check');
+writeTga(img, path.join(formats, 'a.tga'));
+writePng(img, path.join(formats, 'a.png'));
+pngToJpeg(path.join(formats, 'a.png'), path.join(formats, 'a.jpg'));
+for (const f of ['a.tga', 'a.png', 'a.jpg']) {
+  assert.strictEqual(P.decodeStrip(readImage(path.join(formats, f))), 'fff000|format check', f);
+}
+// A real Forever screenshot (no strip) must be ignored, if one is around.
+const realShots = 'D:\\World of Warcraft\\_forever_\\Screenshots';
+const real = fs.existsSync(realShots) && fs.readdirSync(realShots).find((n) => /\.jpe?g$/i.test(n));
+if (real) assert.strictEqual(P.decodeStrip(readImage(path.join(realShots, real))), null, real);
+console.log(`Codec checks passed (TGA, PNG, JPEG${real ? ', real screenshot ignored' : ''}).`);
+
+(async () => {
+  // --- fake WoW install ---
+  const wow = path.join(tmp, '_forever_');
+  const svDir = path.join(wow, 'WTF', 'Account', '12345#1', 'SavedVariables');
+  const shots = path.join(wow, 'Screenshots');
+  fs.mkdirSync(svDir, { recursive: true });
+  fs.mkdirSync(shots, { recursive: true });
+  fs.mkdirSync(path.join(wow, 'Interface', 'AddOns'), { recursive: true });
+  writeTga(renderScreen('000000|old prompt'), path.join(shots, 'WoWScrnShot_old.tga'));
+  const hourAgo = new Date(Date.now() - 3600_000);
+  fs.utimesSync(path.join(shots, 'WoWScrnShot_old.tga'), hourAgo, hourAgo);
+  fs.writeFileSync(path.join(shots, 'WoWScrnShot_mine.jpg'), 'not really a jpeg');
+  // Sent seconds before the bridge started: must still be answered.
+  writeTga(renderScreen('0e0e0e|!selftest'), path.join(shots, 'WoWScrnShot_early.tga'));
+
+  // Fake Claude: echoes the prompt back in the same JSON shape as `claude -p --output-format json`.
+  const fake = path.join(tmp, 'fake-claude.js');
+  fs.writeFileSync(fake, `
+    let s = ''; process.stdin.on('data', d => s += d);
+    process.stdin.on('end', () => {
+      const resumed = process.argv.includes('--resume');
+      process.stdout.write(JSON.stringify({ result: 'Echo: ' + s + (resumed ? ' (resumed)' : '') + ' ]]', session_id: 'sess-1', is_error: false }));
+    });`);
+
+  setup({ wow, slots: 3 });
+  const cfg = JSON.parse(fs.readFileSync(process.env.CB_CONFIG, 'utf8'));
+  cfg.claudeCommand = [process.execPath, fake];
+  assert.deepStrictEqual(cfg.savedVarDirs, [svDir]);
+
+  const addons = path.join(wow, 'Interface', 'AddOns');
+  const slot = (i) => fs.readFileSync(path.join(addons, P.slotName(i), 'r.lua'), 'utf8');
+  const sig = (i) => fs.statSync(path.join(addons, 'ClaudeBridge', 'sig', P.sigName(i))).size;
+
+  const bridge = new Bridge(cfg);
+  bridge.start();
+
+  await waitFor(() => sig(1) > 0);
+  assert.match(slot(1), /^ClaudeBridge_OnReply\("0e0e0e", /, 'recent pre-start prompt answered');
+  assert.ok(!fs.existsSync(path.join(shots, 'WoWScrnShot_early.tga')));
+
+  // From here on slot numbers are shifted by one.
+  bridge.cursor = 1;
+  writeTga(renderScreen('abc123|how do I frost nova pull?'), path.join(shots, 'WoWScrnShot_1.tga'));
+  await waitFor(() => slot(1).includes('abc123'));
+  await waitFor(() => sig(1) > 0);
+  assert.match(slot(1), /^ClaudeBridge_OnReply\("abc123", \[=+\[\n/);
+  assert.ok(slot(1).includes('Echo: how do I frost nova pull?'), slot(1));
+  assert.ok(!fs.existsSync(path.join(shots, 'WoWScrnShot_1.tga')), 'decoded strip screenshot is deleted');
+  assert.ok(fs.existsSync(path.join(shots, 'WoWScrnShot_old.tga')), 'files from before the bridge started are untouched');
+  assert.ok(fs.existsSync(path.join(shots, 'WoWScrnShot_mine.jpg')), 'unreadable/ordinary screenshots are untouched');
+
+  // An ordinary screenshot taken while the bridge runs is left alone.
+  const plain = path.join(shots, 'WoWScrnShot_plain.png');
+  writePng({ width: 640, height: 480, channels: 3, data: Buffer.alloc(640 * 480 * 3, 120) }, plain);
+
+  // Second prompt resumes the same Claude session and goes to slot 2.
+  writePng(renderScreen('def456|thanks'), path.join(shots, 'WoWScrnShot_2.png'));
+  await waitFor(() => sig(2) > 0);
+  assert.ok(slot(2).includes('Echo: thanks (resumed)'), slot(2));
+  assert.ok(fs.existsSync(plain), 'ordinary screenshot kept');
+
+  // Character info reaches Claude as readable lines before the question.
+  writeTga(renderScreen(`c0ffee|${G}char\tTestmage, level 11 Human Mage\ngear\tRanged: Greater Magic Wand (17)${G}upgrade?`),
+    path.join(shots, 'WoWScrnShot_ctx.tga'));
+  await waitFor(() => slot(3).includes('c0ffee'));
+  assert.ok(slot(3).includes('Character: Testmage, level 11 Human Mage\nEquipped: Ranged: Greater Magic Wand (17)\n\n[Question]\nupgrade?'), slot(3));
+  bridge.cursor = 3; // reuse slot 3 below
+
+  // Self-test never calls Claude.
+  writeTga(renderScreen('5e1f00|!selftest'), path.join(shots, 'WoWScrnShot_3.tga'));
+  await waitFor(() => slot(3).includes('Self-test OK'));
+
+  // Restarting the bridge mid-session keeps the cursor.
+  bridge.stop();
+  const bridge2 = new Bridge(cfg);
+  bridge2.start();
+  assert.strictEqual(bridge2.cursor, 4);
+
+  // A /reload rewrites SavedVariables -> all slots reset.
+  fs.writeFileSync(path.join(svDir, 'ClaudeBridge.lua'), 'ClaudeBridgeDB = {}\n');
+  await waitFor(() => sig(1) === 0);
+  assert.strictEqual(slot(1), P.EMPTY_SLOT_LUA);
+  assert.strictEqual(bridge2.cursor, 1);
+
+  // "/claude new" clears the session.
+  writeTga(renderScreen('aaa111|!new'), path.join(shots, 'WoWScrnShot_4.tga'));
+  await waitFor(() => sig(1) > 0);
+  assert.ok(slot(1).includes('Started a new conversation.'));
+  assert.strictEqual(JSON.parse(fs.readFileSync(process.env.CB_STATE, 'utf8')).sessionId, undefined);
+
+  bridge2.stop();
+  console.log('All bridge tests passed.');
+})().catch((e) => {
+  console.error('TEST FAILED:', e);
+  process.exitCode = 1;
+}).finally(() => {
+  fs.rmSync(tmp, { recursive: true, force: true });
+  process.exit(); // a failed test can leave a bridge timer running
+});

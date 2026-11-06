@@ -1,0 +1,8 @@
+## Interface: 16001
+## Title: Claude Bridge
+## Notes: Ask Claude Code from inside the game. Type /claude.
+## Version: 0.1.0
+## SavedVariables: ClaudeBridgeDB
+
+config.lua
+ClaudeBridge.lua

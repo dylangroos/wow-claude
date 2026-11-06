@@ -1,0 +1,93 @@
+# Claude Bridge for WoW: Forever
+
+Ask Claude Code questions from a small window inside World of Warcraft: Forever,
+and get answers back in the game, usually in 5 to 20 seconds. Claude knows your
+character (class, level, zone, talents, gear, professions, quests) and can search
+the web for current Forever info.
+
+WoW addons can't touch the network or read files, so the bridge talks to the game
+through the only two doors it has:
+
+```
+OUT  /claude <question>
+       │  addon draws the question as a strip of colored 16x16 blocks
+       │  in the top-left corner and calls Screenshot()  (TGA, lossless)
+       ▼
+     Screenshots\WoWScrnShot_*.tga  ──►  bridge.js decodes the strip,
+                                          deletes that screenshot,
+                                          runs `claude -p`
+IN     │
+       ▼
+     bridge writes the answer into the next "reply slot" addon
+     (ClaudeBridge_R01..R50, load-on-demand), then fills in a matching
+     silent .wav. The addon plays the .wav every 250 ms; once it really
+     plays, it calls LoadAddOn on the slot, which reads the answer from disk.
+```
+
+No input injection, no memory reading, no gameplay automation. The addon uses
+normal addon APIs and only reads your own character's info. The PC side only
+reads screenshots and writes addon files.
+
+## Setup (once)
+
+Requires Node.js 18+ and [Claude Code](https://claude.com/claude-code). No npm
+packages.
+
+1. Log Claude Code in for the terminal (the desktop app's login doesn't carry over):
+   ```
+   claude auth login
+   ```
+2. Install the addon with WoW closed (or fully restart WoW afterwards):
+   ```
+   node bridge\setup.js
+   ```
+   The default game folder is `D:\World of Warcraft\_forever_`. Use
+   `--wow "<path to _forever_>"` for another location.
+3. Start WoW: Forever. In the **AddOns** list on the character screen, make sure
+   **Claude Bridge** and its reply entries are enabled.
+
+## Every session
+
+```
+node bridge\bridge.js
+```
+
+Leave it running while you play. In game:
+
+| Command | What it does |
+|---|---|
+| `/claude` | Open or close the window. Type a question and press Enter. |
+| `/claude <question>` | Ask directly from chat. |
+| `/claude new` | Start a fresh conversation. |
+| `/claude context` | Show the character info Claude gets. `context off` / `context on` toggles it. |
+| `/claude cancel` | Stop waiting for an answer. |
+| `/claude selftest` | Round-trip check without asking Claude. |
+
+## Things to know
+
+- **Game sound must be on.** The ready signal is a silent .wav on the Master channel.
+- **50 replies per UI session.** WoW loads each addon only once per session, so each
+  reply needs a fresh slot. `/reload` resets them all.
+- **Character info is sent as diffs.** The first question sends everything; later
+  ones only send what changed (zone, gold, a new quest...).
+- **Answer-only.** Claude can search and read the web but can't edit files or run
+  commands. See the `--tools` / `--allowedTools` lines in `bridge/bridge.js`.
+- A brief flash of colored blocks in the top-left corner is the question going out.
+- Uninstall: `node bridge\setup.js --uninstall`.
+
+## Tests
+
+```
+node bridge\test.js
+```
+
+Runs the whole loop offline against a fake WoW folder and a fake Claude: the strip
+codec on TGA, PNG and JPEG screenshots, the reply slots, sessions, character info
+parsing, and slot resets on `/reload`.
+
+## Files
+
+- `addon/ClaudeBridge/`: the in-game addon (window, strip encoder, character info, reply polling)
+- `bridge/protocol.js`: strip codec, TGA/PNG readers, payload format, reply-slot files
+- `bridge/bridge.js`: watches Screenshots, calls Claude, writes replies
+- `bridge/setup.js`: installs the addon and its reply slots
