@@ -68,6 +68,9 @@ Leave it running while you play. In game:
 - **Game sound must be on.** The ready signal is a silent .wav on the Master channel.
 - **50 replies per UI session.** WoW loads each addon only once per session, so each
   reply needs a fresh slot. `/reload` resets them all.
+- **Shift-click items and quests into the box** (while it has focus) to ask about them.
+  The item's tooltip and whatever you wear in that slot go along, or the quest's text
+  and objectives with your progress.
 - **Character info is sent as diffs.** The first question sends everything; later
   ones only send what changed (zone, gold, a new quest...).
 - **Answer-only.** Claude can search and read the web but can't edit files or run
