@@ -247,15 +247,29 @@ function parsePayload(payload) {
   return { id: m[1], text, ctx };
 }
 
+const ATT_LABELS = {
+  att_item: 'Linked item',
+  att_equipped: 'Currently equipped in that slot',
+  att_quest: 'Linked quest',
+};
+
 function buildPrompt(text, ctx) {
-  if (!ctx || ctx.length === 0) return text;
-  return [
-    '[Game state, attached automatically by the addon. Only what changed since the last message is included.]',
-    ...ctx.map(([k, v]) => `${CTX_LABELS[k] || k}: ${v}`),
-    '',
-    '[Question]',
-    text,
-  ].join('\n');
+  const state = (ctx || []).filter(([k]) => !k.startsWith('att_'));
+  const atts = (ctx || []).filter(([k]) => k.startsWith('att_'));
+  if (state.length === 0 && atts.length === 0) return text;
+  const out = [];
+  if (state.length) {
+    out.push('[Game state, attached automatically by the addon. Only what changed since the last message is included.]');
+    for (const [k, v] of state) out.push(`${CTX_LABELS[k] || k}: ${v}`);
+    out.push('');
+  }
+  if (atts.length) {
+    out.push('[Shift-clicked into the question by the player; tooltip lines are separated by " / "]');
+    for (const [k, v] of atts) out.push(`${ATT_LABELS[k] || k}: ${v}`);
+    out.push('');
+  }
+  out.push('[Question]', text);
+  return out.join('\n');
 }
 
 // ---------------------------------------------------------------------------

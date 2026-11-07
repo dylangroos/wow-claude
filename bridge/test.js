@@ -120,6 +120,9 @@ assert.deepStrictEqual(P.parsePayload(`abc123|${G}char\tBob, level 11 Human Mage
 assert.strictEqual(P.parsePayload('nope'), null);
 assert.strictEqual(P.buildPrompt('hi', []), 'hi');
 assert.match(P.buildPrompt('where now?', [['zone', 'Elwynn Forest']]), /^\[Game state[^\n]*\]\nLocation: Elwynn Forest\n\n\[Question\]\nwhere now\?$/);
+assert.match(P.buildPrompt('[Wand] upgrade?', [['zone', 'Elwynn'], ['att_item', 'Wand / Ranged'], ['att_equipped', 'Old Wand']]),
+  /^\[Game state[^\n]*\]\nLocation: Elwynn\n\n\[Shift-clicked[^\n]*\]\nLinked item: Wand \/ Ranged\nCurrently equipped in that slot: Old Wand\n\n\[Question\]\n\[Wand\] upgrade\?$/);
+assert.match(P.buildPrompt('q', [['att_quest', 'Bounty']]), /^\[Shift-clicked[^\n]*\]\nLinked quest: Bounty\n\n\[Question\]\nq$/);
 
 // File formats (JPEG goes through the same Windows conversion the bridge uses).
 const formats = path.join(tmp, 'formats');

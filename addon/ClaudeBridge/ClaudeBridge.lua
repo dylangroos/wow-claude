@@ -87,6 +87,11 @@ local function buildUI()
   log:SetFading(false)
   log:SetMaxLines(500)
   if log.SetIndentedWordWrap then log:SetIndentedWordWrap(true) end
+  -- Item/quest links in the log are clickable, like in chat.
+  if log.SetHyperlinksEnabled then log:SetHyperlinksEnabled(true) end
+  log:SetScript("OnHyperlinkClick", function(self, link, text, button)
+    if SetItemRef then SetItemRef(link, text, button, self) end
+  end)
   log:EnableMouseWheel(true)
   log:SetScript("OnMouseWheel", function(self, delta)
     if delta > 0 then self:ScrollUp() else self:ScrollDown() end
@@ -366,6 +371,184 @@ local function contextDiff(ctx, last)
 end
 -- END context --------------------------------------------------------------
 
+-- BEGIN links --------------------------------------------------------------
+-- Shift-clicked item and quest links in a question get their details attached
+-- (one-off, not diffed): the item's tooltip plus what you wear in that slot,
+-- or the quest's text and objectives with your progress.
+
+local ATT_MAX = 1500      -- bytes of attachments per question, at most
+local MAX_LINKS = 3
+local attErrors = {}
+local selfSelecting = false -- questAttachment changes the quest selection itself
+
+-- Equip location -> inventory slots to compare against.
+local EQUIP_SLOTS = {
+  INVTYPE_HEAD = { 1 }, INVTYPE_NECK = { 2 }, INVTYPE_SHOULDER = { 3 }, INVTYPE_CHEST = { 5 },
+  INVTYPE_ROBE = { 5 }, INVTYPE_WAIST = { 6 }, INVTYPE_LEGS = { 7 }, INVTYPE_FEET = { 8 },
+  INVTYPE_WRIST = { 9 }, INVTYPE_HAND = { 10 }, INVTYPE_FINGER = { 11, 12 },
+  INVTYPE_TRINKET = { 13, 14 }, INVTYPE_CLOAK = { 15 }, INVTYPE_WEAPON = { 16, 17 },
+  INVTYPE_2HWEAPON = { 16 }, INVTYPE_WEAPONMAINHAND = { 16 }, INVTYPE_WEAPONOFFHAND = { 17 },
+  INVTYPE_SHIELD = { 17 }, INVTYPE_HOLDABLE = { 17 }, INVTYPE_RANGED = { 18 },
+  INVTYPE_RANGEDRIGHT = { 18 }, INVTYPE_THROWN = { 18 }, INVTYPE_RELIC = { 18 },
+}
+
+-- Visible text of a link-bearing string: "[Name]" instead of escape codes.
+local function plainText(s)
+  return (s:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|H.-|h(.-)|h", "%1"))
+end
+
+local scanTip
+local function tooltipLines(link)
+  local out = {}
+  if C_TooltipInfo and C_TooltipInfo.GetHyperlink then
+    local ok, data = pcall(C_TooltipInfo.GetHyperlink, link)
+    if not ok then data = nil end
+    if data and TooltipUtil and TooltipUtil.SurfaceArgs then pcall(TooltipUtil.SurfaceArgs, data) end
+    for _, line in ipairs(data and data.lines or {}) do
+      if TooltipUtil and TooltipUtil.SurfaceArgs and line.leftText == nil then pcall(TooltipUtil.SurfaceArgs, line) end
+      local l, r = line.leftText, line.rightText
+      if l and l ~= "" then out[#out + 1] = (r and r ~= "") and (l .. " " .. r) or l end
+    end
+  end
+  if #out == 0 then -- older way: render into a hidden tooltip and read its lines
+    if not scanTip then
+      scanTip = CreateFrame("GameTooltip", "ClaudeBridgeScanTip", nil, "GameTooltipTemplate")
+    end
+    scanTip:SetOwner(WorldFrame, "ANCHOR_NONE")
+    scanTip:ClearLines()
+    scanTip:SetHyperlink(link)
+    for i = 1, scanTip:NumLines() do
+      local l = _G["ClaudeBridgeScanTipTextLeft" .. i]
+      local r = _G["ClaudeBridgeScanTipTextRight" .. i]
+      local lt, rt = l and l:GetText(), r and r:IsShown() and r:GetText()
+      if lt and lt ~= "" then out[#out + 1] = (rt and rt ~= "") and (lt .. " " .. rt) or lt end
+    end
+    scanTip:Hide()
+  end
+  return table.concat(out, " / ")
+end
+
+local function itemAttachments(link, out)
+  out[#out + 1] = { "att_item", tooltipLines(link) }
+  local instant = (C_Item and C_Item.GetItemInfoInstant) or GetItemInfoInstant
+  local equipLoc = instant and select(4, instant(link))
+  for _, slot in ipairs(EQUIP_SLOTS[equipLoc] or {}) do
+    local worn = GetInventoryItemLink("player", slot)
+    if worn and worn ~= link then out[#out + 1] = { "att_equipped", tooltipLines(worn) } end
+  end
+end
+
+local function questAttachment(link, out)
+  local questID = tonumber(link:match("quest:(%d+)"))
+  local parts = { plainText(link) }
+  local Q = C_QuestLog
+  local index = Q and Q.GetLogIndexForQuestID and Q.GetLogIndexForQuestID(questID)
+  if index then
+    if GetQuestLogQuestText then
+      local prev = Q.GetSelectedQuest and Q.GetSelectedQuest()
+      selfSelecting = true
+      if Q.SetSelectedQuest then Q.SetSelectedQuest(questID) end
+      local ok, desc, objText = pcall(GetQuestLogQuestText, index)
+      if prev and Q.SetSelectedQuest then Q.SetSelectedQuest(prev) end
+      selfSelecting = false
+      if not ok then desc, objText = nil, nil end
+      if objText and objText ~= "" then parts[#parts + 1] = "Goal: " .. objText end
+      if desc and desc ~= "" then parts[#parts + 1] = "Text: " .. desc end
+    end
+    local objs = {}
+    for _, o in ipairs(Q.GetQuestObjectives and Q.GetQuestObjectives(questID) or {}) do
+      if o.text and o.text ~= "" then objs[#objs + 1] = o.text .. (o.finished and " (done)" or "") end
+    end
+    if #objs > 0 then parts[#parts + 1] = "Objectives: " .. table.concat(objs, "; ") end
+    if Q.IsComplete and Q.IsComplete(questID) then parts[#parts + 1] = "Ready to turn in." end
+  end
+  if #parts == 1 then parts[#parts + 1] = tooltipLines(link) end -- not in the log: use its tooltip
+  out[#out + 1] = { "att_quest", table.concat(parts, " | ") }
+end
+
+-- { key, value } attachments for the links in a question, cut to ATT_MAX.
+local function linkAttachments(text)
+  local found, out = 0, {}
+  attErrors = {}
+  for link in text:gmatch("|H[^|]+|h.-|h") do
+    if found >= MAX_LINKS then break end
+    found = found + 1
+    local kind = link:match("^|H(%a+):")
+    local fn = (kind == "item" and itemAttachments) or (kind == "quest" and questAttachment)
+    if fn then
+      local ok, err = pcall(fn, link, out)
+      if not ok then attErrors[#attErrors + 1] = kind .. ": " .. tostring(err) end
+    end
+  end
+  -- Linked things first, then what's worn (once each), so comparisons never
+  -- crowd out the items actually asked about.
+  local ordered, seen = {}, {}
+  for pass = 1, 2 do
+    for _, kv in ipairs(out) do
+      if (kv[1] == "att_equipped") == (pass == 2) and not seen[kv[1] .. kv[2]] then
+        seen[kv[1] .. kv[2]] = true
+        ordered[#ordered + 1] = kv
+      end
+    end
+  end
+  local used, kept = 0, {}
+  for _, kv in ipairs(ordered) do
+    local v = kv[2]:gsub("[\n\t\29]", " "):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+    local room = ATT_MAX - used - #kv[1] - 2
+    if #v > room and room >= 60 then v = v:sub(1, room - 3):gsub("[\192-\255][\128-\191]*$", "") .. "..." end
+    if v ~= "" and #v <= room then
+      kept[#kept + 1] = { kv[1], v }
+      used = used + #kv[1] + #v + 2
+    end
+  end
+  if ClaudeBridgeDB.debug then ClaudeBridgeDB.debug.linkErrors = attErrors end
+  return kept
+end
+
+-- Shift-click inserts links into our box while it has focus, like chat does.
+local lastInsert, lastInsertAt
+local function insertLink(link)
+  if not (ui and ui:IsShown() and ui.input:HasFocus() and link) then return end
+  if link == lastInsert and GetTime() == lastInsertAt then return end -- two hooks, one click
+  lastInsert, lastInsertAt = link, GetTime()
+  ui.input:Insert(link)
+end
+
+local function questLinkFor(questID)
+  if not questID then return nil end
+  if GetQuestLink then return GetQuestLink(questID) end
+  local info = C_QuestLog and C_QuestLog.GetLogIndexForQuestID and C_QuestLog.GetInfo(C_QuestLog.GetLogIndexForQuestID(questID))
+  if info then return string.format("|cffffff00|Hquest:%d:%d|h[%s]|h|r", questID, info.level or 0, info.title) end
+end
+
+local function installLinkHooks()
+  local hooked = {}
+  local function hook(tbl, name, fn)
+    local owner = tbl or _G
+    if type(owner[name]) ~= "function" then return end
+    -- Never let our code throw into Blizzard's UI.
+    local safe = function(...) pcall(fn, ...) end
+    if tbl then hooksecurefunc(tbl, name, safe) else hooksecurefunc(name, safe) end
+    hooked[#hooked + 1] = name
+  end
+  hook(nil, "ChatEdit_InsertLink", insertLink)
+  hook(ChatFrameUtil, "InsertLink", insertLink)
+  -- Quest logs only insert links while a chat box is open. These are called by
+  -- name on a shift-click, so hooking them catches quests for our box too.
+  local function questClicked(questID)
+    if selfSelecting or not (IsModifiedClick and IsModifiedClick("CHATLINK")) then return end
+    insertLink(questLinkFor(questID))
+  end
+  hook(nil, "ChatEdit_TryInsertQuestLinkForQuestID", questClicked)
+  hook(C_QuestLog, "SetSelectedQuest", questClicked)
+  hook(nil, "SelectQuestLogEntry", function(idx)
+    local info = C_QuestLog and C_QuestLog.GetInfo and C_QuestLog.GetInfo(idx)
+    questClicked(info and info.questID or (GetQuestLogTitle and select(8, GetQuestLogTitle(idx))))
+  end)
+  ClaudeBridgeDB.linkHooks = hooked
+end
+-- END links ----------------------------------------------------------------
+
 local lastCtx = {}        -- what this conversation's Claude has already been told
 
 local strip, tiles, savedFormat
@@ -434,13 +617,18 @@ function ClaudeBridge_Send(text)
   end
 
   local id = string.format("%06x", math.random(0, 0xFFFFFF))
-  local ctx, body = nil, text
+  local ctx, body = nil, plainText(text)
   if text == "!new" then
     lastCtx = {} -- the new conversation hasn't seen anything yet
-  elseif text:sub(1, 1) ~= "!" and ClaudeBridgeDB.context ~= false then
-    ctx = gatherContext()
-    local diff = contextDiff(ctx, lastCtx)
-    if diff ~= "" then body = CTX_SEP .. diff .. CTX_SEP .. text end
+  elseif text:sub(1, 1) ~= "!" then
+    local lines = {}
+    if ClaudeBridgeDB.context ~= false then
+      ctx = gatherContext()
+      local diff = contextDiff(ctx, lastCtx)
+      if diff ~= "" then lines[#lines + 1] = diff end
+    end
+    for _, kv in ipairs(linkAttachments(text)) do lines[#lines + 1] = kv[1] .. "\t" .. kv[2] end
+    if #lines > 0 then body = CTX_SEP .. table.concat(lines, "\n") .. CTX_SEP .. body end
   end
   local pw = GetPhysicalScreenSize()
   local syms = encode(id .. "|" .. body, math.floor(pw / BLOCK))
@@ -570,8 +758,12 @@ local ev = CreateFrame("Frame")
 ev:RegisterEvent("SCREENSHOT_SUCCEEDED")
 ev:RegisterEvent("SCREENSHOT_FAILED")
 ev:RegisterEvent("PLAYER_LOGOUT")
+ev:RegisterEvent("PLAYER_LOGIN")
 ev:SetScript("OnEvent", function(_, event)
-  if event == "SCREENSHOT_SUCCEEDED" then
+  if event == "PLAYER_LOGIN" then
+    local ok, err = pcall(installLinkHooks)
+    if not ok then ClaudeBridgeDB.linkHooks = { "failed: " .. tostring(err) } end
+  elseif event == "SCREENSHOT_SUCCEEDED" then
     hideStrip()
     if not pending and gaveUp and GetTime() - gaveUp.sentAt < 60 then
       pending, gaveUp = gaveUp, nil
