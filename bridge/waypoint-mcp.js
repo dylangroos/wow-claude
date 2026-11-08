@@ -10,7 +10,7 @@ const TOOL = {
   name: 'set_waypoint',
   description: 'Point the player to a spot in World of Warcraft: an arrow on screen turns toward it and '
     + 'the world map shows a line to it. Use the zone name as the game shows it and the zone map '
-    + 'coordinates (0-100) from a source page such as Wowhead. Never guess coordinates.',
+    + 'coordinates (0-100) from a source page such as Wowhead. Never guess coordinates. It replaces any route set earlier.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -110,7 +110,7 @@ function handle(msg, file) {
         const err = checkStops(stops);
         if (err) return { isError: true, content: [{ type: 'text', text: `Route not set: ${err}.` }] };
         const clean = stops.map(cleanStop);
-        return record(file, { stops: clean }, `Route set: ${clean.length} stops, first ${clean[0].label} in ${clean[0].zone}.`);
+        return record(file, { stops: clean }, `Route set: ${clean.length} ${clean.length === 1 ? 'stop' : 'stops'}, first ${clean[0].label} in ${clean[0].zone}.`);
       }
       if (p.name !== TOOL.name) return { isError: true, content: [{ type: 'text', text: `Unknown tool ${p.name}.` }] };
       const err = checkWaypoint(p.arguments);

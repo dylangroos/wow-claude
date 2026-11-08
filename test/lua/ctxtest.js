@@ -181,6 +181,22 @@ assert.ok(c8.quests.endsWith('...'), 'quests cut');
 assert.ok(!c8.quests.includes('\ufffd'), 'no broken UTF-8');
 const ctxBytes = m8.ctx.reduce((n, [k, v]) => n + Buffer.byteLength(k) + Buffer.byteLength(v) + 2, 0);
 assert.ok(ctxBytes <= 1500, `context ${ctxBytes} bytes`);
+// The route survives a full budget: it is read right after the position, before the quest log eats the room.
+const ROUTE = 'stop 2 of 10. Now: Cave of the Forgotten Murlocs Below the Ridge, Elwynn Forest 40.0, 20.1. ' +
+  'Then: Hogger the Gnoll Warlord and His Raiders, Elwynn Forest 25.6, 78.4; Lions Pride Inn and Stables of Goldshire, Elwynn Forest 41.2, 65.8; ' +
+  'Northshire Abbey Cellar Storeroom, Elwynn Forest 48.9, 42.3; and 5 more';
+assert.ok(Buffer.byteLength(ROUTE) > 300 && Buffer.byteLength(ROUTE) < 360, 'route stub size ' + Buffer.byteLength(ROUTE));
+replyTo(m8, 'ok');
+run('ClaudeBridge_WaypointContext = function() return ' + JSON.stringify(ROUTE) + ' end; ClaudeBridge_Send("q9")', 'way1');
+const c9 = Object.fromEntries(P.parsePayload(sentPayload()).ctx);
+assert.strictEqual(c9.way, ROUTE, 'way arrives whole under a full budget');
+assert.ok(!c9.way.endsWith('...'));
+replyTo(P.parsePayload(sentPayload()), 'ok');
+run('ClaudeBridge_WaypointContext = function() return "none" end; ClaudeBridge_Send("q10")', 'way2');
+const c10 = Object.fromEntries(P.parsePayload(sentPayload()).ctx);
+assert.strictEqual(c10.way, 'none', 'way none arrives');
+replyTo(P.parsePayload(sentPayload()), 'ok');
+run('ClaudeBridge_WaypointContext = nil', 'way3');
 console.log(`Big quest log: context ${ctxBytes} bytes, whole payload ${Buffer.byteLength(p8)} bytes, ${evalStr('#STRIP')} strip blocks (${Math.ceil(Number(evalStr('#STRIP')) / 120)} rows).`);
 console.log(`Screenshots taken: ${evalStr('SHOTS')}`);
 console.log('Lua context tests passed.');

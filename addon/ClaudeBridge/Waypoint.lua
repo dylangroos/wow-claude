@@ -193,7 +193,9 @@ function ClaudeBridge_WaypointContext()
   if not c then return "none" end
   local s = string.format("stop %d of %d. Now: %s", c.current, #c.stops, at(c.stops[c.current]))
   local rest = {}
-  for i = c.current + 1, #c.stops do rest[#rest + 1] = at(c.stops[i]) end
+  local last = math.min(#c.stops, c.current + 3) -- at most 3 stops after this one
+  for i = c.current + 1, last do rest[#rest + 1] = at(c.stops[i]) end
+  if #c.stops > last then rest[#rest + 1] = string.format("and %d more", #c.stops - last) end
   if #rest > 0 then s = s .. ". Then: " .. table.concat(rest, "; ") end
   return s
 end

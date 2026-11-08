@@ -96,16 +96,20 @@ The waypoint lines gain:
 ### What Claude sees (character info)
 
 - New field `way`, read from `ClaudeBridge_WaypointContext()` in
-  `Waypoint.lua`. It goes last in the list of fields, so it is the first field
-  cut if the 1500-byte budget runs out.
+  `Waypoint.lua`. It sits right after `pos` (the map position), not last: when
+  the 1500-byte budget runs out, the later fields are the ones cut, and Claude
+  needs `way` to act.
 - With a chain: `stop 2 of 3. Now: Cave, Elwynn Forest 40.0, 20.1. Then: Hogger, Elwynn Forest 25.6, 78.4`.
-  Stops already passed are left out. Coordinates have one decimal.
+  Stops already passed are left out. Coordinates have one decimal. The value
+  lists the current stop and at most the 3 stops after it, then `and N more`
+  (for example `...; and 5 more`).
 - With no chain: `none`. Fields are sent only when they change, and a missing
   field isn't sent at all, so without `none` Claude would go on believing in a
   chain the player has finished or cleared.
-- Size: 10 stops come to about 450 bytes at most, and the field is sent only
-  when it changes (when a chain is set, a stop is reached, or the chain is
-  cleared).
+- Size: about 85 bytes per stop, so about 350 bytes at most, and the field is
+  sent only when it changes (when a chain is set, a stop is reached, or the
+  chain is cleared). Claude can still find the later stops in its own earlier
+  `set_waypoints` call, because the session is resumed.
 
 ## Error handling
 
@@ -118,7 +122,9 @@ The waypoint lines gain:
 
 Offline tests cover the server (`bridge/waypoint-mcp.test.js`), the bridge and
 reply slot (`bridge/test.js`), the addon in fengari (`test/lua/waypointtest.js`)
-and the context reader (`test/lua/ctxtest.js`, `ctxtest-modern.js`). Claude
+and the `way` field: `test/lua/linkcases.js` covers it passing through
+`ClaudeBridge.lua`, `test/lua/waypointtest.js` covers its text, and
+`test/lua/ctxtest.js` covers it under a full budget. Claude
 calling `set_waypoints` for a real route, and skipping a stop when asked, is
 checked by hand with the bridge running, because the model's choices aren't
 deterministic.
@@ -257,6 +263,17 @@ Feature: Claude sees the chain
     Given a chain of Murloc camp, Cave, Hogger at stop 2, with Cave in Elwynn Forest at 40.0, 20.1 and Hogger at 25.6, 78.4
     When the player sends a question
     Then the character info field "way" is "stop 2 of 3. Now: Cave, Elwynn Forest 40.0, 20.1. Then: Hogger, Elwynn Forest 25.6, 78.4"
+
+  Scenario: A long route shows only the next three stops
+    Given a chain of 10 stops at stop 2
+    When the player sends a question
+    Then the character info field "way" lists stop 2 and stops 3 to 5
+    And it ends with "and 5 more"
+
+  Scenario: The route still reaches Claude when the quest log is full
+    Given a chain is set and the quest log fills the character-info budget
+    When the player sends a question
+    Then the character info field "way" arrives whole
 
   Scenario: Character info reports when no chain is set
     Given a chain was sent with the previous question and has since been cleared

@@ -42,7 +42,8 @@ packages.
    node bridge\setup.js
    ```
    The default game folder is `D:\World of Warcraft\_forever_`. Use
-   `--wow "<path to _forever_>"` for another location.
+   `--wow "<path to _forever_>"` for another location. After pulling an update, run
+   `node bridge\setup.js` again so the game gets the new addon files, then restart the game.
 3. Start WoW: Forever. In the **AddOns** list on the character screen, make sure
    **Claude Bridge** and its reply entries are enabled.
 

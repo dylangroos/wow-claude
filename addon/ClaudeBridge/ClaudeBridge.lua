@@ -231,6 +231,10 @@ local CTX_READERS = {
       if not p then return nil end -- dungeons hide the position
       return string.format("%.1f, %.1f", p.x * 100, p.y * 100)
     end },
+  { "way", function() -- the arrow's route, from Waypoint.lua; nothing when that file isn't loaded.
+      -- Sits right after pos: it is small and Claude needs it to act, and the fields at the end are the ones the budget cuts.
+      return ClaudeBridge_WaypointContext and ClaudeBridge_WaypointContext()
+    end },
   { "money", function()
       local c = GetMoney()
       return string.format("%dg %ds %dc", math.floor(c / 10000), math.floor(c / 100) % 100, c % 100)
@@ -349,9 +353,6 @@ local CTX_READERS = {
         end
       end
       return #out > 0 and table.concat(out, "; ") or "empty"
-    end },
-  { "way", function() -- the arrow's route, from Waypoint.lua; nothing when that file isn't loaded
-      return ClaudeBridge_WaypointContext and ClaudeBridge_WaypointContext()
     end },
 }
 

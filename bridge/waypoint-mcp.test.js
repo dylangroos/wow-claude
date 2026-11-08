@@ -84,6 +84,7 @@ module.exports = async function waypointServerTests(tmp) {
       if (ok) {
         assert.ok(!res.result.isError, `${count} stops: ${JSON.stringify(res)}`);
         assert.strictEqual(last().stops.length, count);
+        if (count === 1) assert.strictEqual(res.result.content[0].text, 'Route set: 1 stop, first Stop 1 in Elwynn Forest.');
       } else {
         assert.strictEqual(res.result.isError, true, `${count} stops`);
         assert.match(res.result.content[0].text, /stops must be a list of 1-10 stops/);

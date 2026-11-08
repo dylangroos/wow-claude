@@ -301,6 +301,14 @@ run(`ClaudeBridgeDB.waypoints = { current = 2, stops = {
   { mapID = 1429, zone = "Elwynn Forest", x = 25.6, y = 78.4, label = "Hogger" } } }`, 'c10');
 assert.strictEqual(evalStr('ClaudeBridge_WaypointContext()'),
   'stop 2 of 3. Now: Cave, Elwynn Forest 40.0, 20.1. Then: Hogger, Elwynn Forest 25.6, 78.4');
+
+// Scenario: A long route shows only the next three stops
+run(`local stops = {}
+  for i = 1, 10 do stops[i] = { mapID = 1429, zone = "Elwynn Forest", x = i, y = 10 + i, label = "S" .. i } end
+  ClaudeBridgeDB.waypoints = { current = 2, stops = stops }`, 'c10b');
+assert.strictEqual(evalStr('ClaudeBridge_WaypointContext()'),
+  'stop 2 of 10. Now: S2, Elwynn Forest 2.0, 12.0. Then: S3, Elwynn Forest 3.0, 13.0; ' +
+  'S4, Elwynn Forest 4.0, 14.0; S5, Elwynn Forest 5.0, 15.0; and 5 more');
 run('ClaudeBridge_ClearWaypoint()', 'c11');
 assert.strictEqual(evalStr('ClaudeBridge_WaypointContext()'), 'none');
 
