@@ -54,7 +54,11 @@ function handle(msg, file) {
       if (err) return { isError: true, content: [{ type: 'text', text: `Waypoint not set: ${err}.` }] };
       const a = p.arguments;
       const w = { zone: a.zone.trim(), x: a.x, y: a.y, label: a.label.trim() };
-      fs.appendFileSync(file, JSON.stringify(w) + '\n');
+      try {
+        fs.appendFileSync(file, JSON.stringify(w) + '\n');
+      } catch (e) {
+        return { isError: true, content: [{ type: 'text', text: `Waypoint not saved: ${e.message}` }] };
+      }
       return { content: [{ type: 'text', text: `Waypoint set: ${w.label} in ${w.zone} at ${w.x}, ${w.y}.` }] };
     }
     default:

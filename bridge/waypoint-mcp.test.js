@@ -57,7 +57,12 @@ module.exports = async function waypointServerTests(tmp) {
     child.kill();
   }
 
-  const { checkWaypoint } = require('./waypoint-mcp');
+  const { checkWaypoint, handle } = require('./waypoint-mcp');
+  // A failed write must come back as a tool error, not crash the server.
+  const unwritable = handle({ method: 'tools/call', params: { name: 'set_waypoint', arguments: { zone: 'Westfall', x: 1, y: 1, label: 'Edge' } } },
+    path.join(tmp, 'no-such-dir', 'w.jsonl'));
+  assert.strictEqual(unwritable.isError, true);
+  assert.match(unwritable.content[0].text, /^Waypoint not saved:/);
   assert.strictEqual(checkWaypoint({ zone: 'Westfall', x: 0, y: 100, label: 'Edge' }), null);
   assert.match(checkWaypoint({ zone: '', x: 1, y: 1, label: 'a' }), /zone/);
   assert.match(checkWaypoint({ zone: 'Westfall', x: 1, y: NaN, label: 'a' }), /\by\b/);
