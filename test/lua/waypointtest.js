@@ -167,4 +167,15 @@ run('ClaudeBridge_SetWaypoint({ zone = "Narnia", x = 1, y = 1, label = "Lamp pos
 assert.ok(evalStr('SAID[#SAID]').includes("Couldn't find the zone Narnia"), evalStr('SAID[#SAID]'));
 assert.strictEqual(evalStr('ClaudeBridgeDB.waypoint'), 'nil');
 
+// Scenario: a failing arrow update tells the player and recovers on the next waypoint
+run(`ClaudeBridge_SetWaypoint(${hogger})`, "again");
+run('local real = C_Map.GetWorldPosFromMapPos; C_Map.GetWorldPosFromMapPos = function() error("no world pos") end; ClaudeBridgeArrow._OnUpdate(ClaudeBridgeArrow, 1); C_Map.GetWorldPosFromMapPos = real', "boom");
+assert.strictEqual(evalStr("ClaudeBridgeArrow:IsShown()"), "false");
+assert.ok(evalStr("SAID[#SAID]").startsWith("Waypoint arrow stopped:"), evalStr("SAID[#SAID]"));
+assert.notStrictEqual(evalStr("ClaudeBridgeDB.waypointError"), "nil");
+run(`ClaudeBridge_SetWaypoint(${hogger})`, "retry");
+assert.strictEqual(evalStr("ClaudeBridgeDB.waypointError"), "nil");
+assert.strictEqual(evalStr("ClaudeBridgeArrow:IsShown()"), "true");
+run("ClaudeBridge_ClearWaypoint()", "tidy");
+
 console.log('Waypoint tests passed.');

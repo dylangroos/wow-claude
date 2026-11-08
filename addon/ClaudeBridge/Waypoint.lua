@@ -81,6 +81,7 @@ local function buildArrow()
     if not ok then -- don't throw every frame; hide and leave a note for debugging
       self:Hide()
       ClaudeBridgeDB.waypointError = tostring(err)
+      say("Waypoint arrow stopped: " .. tostring(err) .. ". Ask again or /reload to retry.", 1, 0.3, 0.3)
     end
   end)
   arrow = f
@@ -132,6 +133,7 @@ function ClaudeBridge_SetWaypoint(w)
   end
   local zone = w.zone:gsub("%s*>.*$", "")
   ClaudeBridgeDB.waypoint = { mapID = mapID, zone = zone, x = w.x, y = w.y, label = w.label }
+  ClaudeBridgeDB.waypointError = nil
   arrivedUntil = 0
   say(describe(ClaudeBridgeDB.waypoint))
   ClaudeBridge_WaypointUpdate()
