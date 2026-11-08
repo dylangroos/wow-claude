@@ -27,6 +27,7 @@ local cursor = 1          -- next reply slot to probe
 local pending             -- { id = "a1b2c3", sentAt = GetTime(), shot = nil|"ok" }
 local SHOT_WAIT = 4       -- seconds for WoW to confirm the screenshot
 local gaveUp              -- the last pending we dropped for lack of a screenshot
+local late                -- a pending that timed out: its answer still shows if it arrives
 local probing = false     -- a sound check is in flight
 local ui                  -- built lazily
 
@@ -44,6 +45,12 @@ local WAYPOINTS_MISSING = "Waypoints aren't loaded yet. Restart the game (a /rel
 
 local function setStatus(text)
   if ui then ui.status:SetText(text or "") end
+end
+
+-- Answers arrive through a sound that WoW only plays in the background with this on.
+local BG_SOUND_CMD = "/console Sound_EnableSoundWhenGameIsInBG 1"
+local function bgSoundOff()
+  return GetCVar("Sound_EnableSoundWhenGameIsInBG") == "0"
 end
 
 local function savePosition()
@@ -663,6 +670,11 @@ function ClaudeBridge_Send(text)
   Screenshot()                        -- captured at the end of this frame, strip included
 
   if text:sub(1, 1) ~= "!" then addLine("> " .. text, 0.55, 0.8, 1) end
+  if bgSoundOff() and not ClaudeBridgeDB.bgTipShown then
+    ClaudeBridgeDB.bgTipShown = true
+    addLine("Tip: answers only arrive while WoW is in front. To get them while you're tabbed out, type "
+      .. BG_SOUND_CMD .. " (Sound in Background).", 0.6, 0.6, 0.6)
+  end
   pending = { id = id, sentAt = GetTime(), ctx = ctx }
   setStatus("sending...")
   startPolling()
@@ -686,18 +698,23 @@ end
 ----------------------------------------------------------------------------
 
 function ClaudeBridge_Poll()
-  if not pending then stopPolling(); setStatus(""); return end
+  if not pending and not late then stopPolling(); setStatus(""); return end
   if probing then return end
-  if GetTime() - pending.sentAt > TIMEOUT then
-    addLine("No answer after " .. TIMEOUT .. "s. Is bridge.js running on your PC, and is game sound on?", 1, 0.3, 0.3)
+  if pending and GetTime() - pending.sentAt > TIMEOUT then
+    local msg = "No answer after " .. TIMEOUT .. "s. I'll keep listening and show it here if it comes."
+      .. " Is bridge.js running on your PC, and is game sound on?"
+    if bgSoundOff() then
+      msg = msg .. " Answers can't arrive while WoW is tabbed out unless Sound in Background is on: " .. BG_SOUND_CMD
+    end
+    addLine(msg, 1, 0.3, 0.3)
     ClaudeBridgeDB.lastFail = { at = time(), id = pending.id, why = "timeout", shot = pending.shot }
-    pending = nil
+    late, pending = pending, nil
     setStatus("")
     return
   end
   if cursor > SLOTS then
     addLine("Out of reply slots for this session. Type /reload to reset them.", 1, 0.8, 0.3)
-    pending = nil
+    pending, late = nil, nil
     return
   end
   local sig = string.format("Interface\\AddOns\\ClaudeBridge\\sig\\%02d.wav", cursor)
@@ -719,13 +736,19 @@ end
 
 -- Called by the reply slot file the bridge wrote.
 function ClaudeBridge_OnReply(id, text, extra)
-  if not pending or id ~= pending.id then return end -- left over from before a /reload
-  -- Claude has now seen this context, unless the bridge reported a failure.
-  if pending.ctx and not text:find("^error:") then
-    for _, kv in ipairs(pending.ctx) do lastCtx[kv[1]] = kv[2] end
+  local req
+  if pending and id == pending.id then
+    req, pending = pending, nil
+    setStatus("")
+  elseif late and id == late.id then
+    req, late = late, nil -- a new question may be waiting, so leave its status alone
+  else
+    return -- left over from before a /reload, or cancelled
   end
-  pending = nil
-  setStatus("")
+  -- Claude has now seen this context, unless the bridge reported a failure.
+  if req.ctx and not text:find("^error:") then
+    for _, kv in ipairs(req.ctx) do lastCtx[kv[1]] = kv[2] end
+  end
   showUI(false)
   for line in (text .. "\n"):gmatch("(.-)\n") do addLine(line) end
   addLine(" ")
@@ -775,8 +798,8 @@ SlashCmdList.CLAUDEBRIDGE = function(msg)
     end
   elseif msg == "cancel" then
     showUI(false)
-    if pending then
-      pending = nil
+    if pending or late then
+      pending, late = nil, nil
       setStatus("")
       addLine("Stopped waiting. A late answer to that question will be ignored.", 0.6, 0.6, 0.6)
     else

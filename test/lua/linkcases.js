@@ -129,3 +129,50 @@ assert.strictEqual(evalStr('tostring(CLEARED)'), 'true');
 assert.strictEqual(evalStr('LINES[#LINES]'), 'Waypoint cleared.');
 run('ClaudeBridge_ClearWaypoint = SAVED_CW', 'wp15');
 console.log('Waypoint hook tests passed.');
+
+// ---- late replies: WoW tabbed out with Sound in Background off, so the signal can't play ----
+const lastLine = () => evalStr('LINES[#LINES]');
+const allLines = () => evalStr('table.concat(LINES, "\\n")');
+run(`SAVED_GT, SAVED_PSF, SAVED_CS, SAVED_CV = GetTime, PlaySoundFile, C_Sound, GetCVar
+  NOW = 1000; GetTime = function() return NOW end
+  PlaySoundFile = function() return true, 7 end
+  StopSound = function() end
+  C_Sound = { IsPlaying = function() return false end }
+  BGSOUND = "0"
+  GetCVar = function(k) if k == "Sound_EnableSoundWhenGameIsInBG" then return BGSOUND end return "jpeg" end
+  ClaudeBridgeDB.bgTipShown = nil`, 'late0');
+// Scenario: the first question with background sound off gets a one-time tip.
+run('ClaudeBridge_Send("is arcane good?")', 'late1');
+assert.ok(allLines().includes('/console Sound_EnableSoundWhenGameIsInBG 1'), allLines());
+const late = P.parsePayload(sentPayload()).id;
+run('for _, h in ipairs(EVENTS) do h(nil, "SCREENSHOT_SUCCEEDED") end', 'late2');
+// Scenario: no answer within the timeout, the addon says it keeps listening.
+run('NOW = NOW + 241; ClaudeBridge_Poll()', 'late3');
+assert.ok(lastLine().includes('keep listening'), lastLine());
+assert.ok(lastLine().includes('Sound in Background'), lastLine());
+// Probing goes on after the timeout (the arrow and chat are free for a new question meanwhile).
+run('PROBES = 0; PlaySoundFile = function() PROBES = PROBES + 1; return true, 7 end; ClaudeBridge_Poll(); TIMERS[#TIMERS]()', 'late4');
+assert.strictEqual(L1('PROBES'), 1, 'still probing after the timeout');
+// Scenario: the answer arrives after the timeout and still shows.
+run(P.slotLua(late, 'Stay Frost.', undefined), 'late5');
+assert.ok(allLines().includes('Stay Frost.'), allLines());
+// The tip was one-time.
+run('ClaudeBridge_Send("again?")', 'late6');
+const tips = allLines().split('\n').filter((l) => l.startsWith('Tip: answers only arrive')).length;
+assert.strictEqual(tips, 1, 'tip shown once');
+// Scenario: a late answer to a timed-out question shows even after a new question was asked.
+const q2 = P.parsePayload(sentPayload()).id;
+run('for _, h in ipairs(EVENTS) do h(nil, "SCREENSHOT_SUCCEEDED") end; NOW = NOW + 241; ClaudeBridge_Poll()', 'late7');
+run('ClaudeBridge_Send("third?")', 'late8');
+run(P.slotLua(q2, 'Late but here.', undefined), 'late9');
+assert.ok(allLines().includes('Late but here.'), allLines());
+// /claude cancel stops listening for both.
+run('SlashCmdList.CLAUDEBRIDGE("cancel")', 'late10');
+const q3 = P.parsePayload(sentPayload()).id;
+run(P.slotLua(q3, 'Should not show.', undefined), 'late11');
+assert.ok(!allLines().includes('Should not show.'), 'cancelled answer ignored');
+// With background sound on, there is no tip and no background hint in the timeout message.
+run('BGSOUND = "1"; ClaudeBridgeDB.bgTipShown = nil; ClaudeBridge_Send("fourth?"); for _, h in ipairs(EVENTS) do h(nil, "SCREENSHOT_SUCCEEDED") end; NOW = NOW + 241; ClaudeBridge_Poll()', 'late12');
+assert.ok(lastLine().includes('keep listening') && !lastLine().includes('Sound in Background'), lastLine());
+run('SlashCmdList.CLAUDEBRIDGE("cancel"); GetTime, PlaySoundFile, C_Sound, GetCVar = SAVED_GT, SAVED_PSF, SAVED_CS, SAVED_CV', 'late13');
+console.log('Late reply tests passed.');

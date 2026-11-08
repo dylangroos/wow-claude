@@ -71,6 +71,10 @@ the input box; Esc closes it.
 ## Things to know
 
 - **Game sound must be on.** The ready signal is a silent .wav on the Master channel.
+  WoW mutes everything while tabbed out unless Sound in Background is on
+  (`/console Sound_EnableSoundWhenGameIsInBG 1`); without it, answers wait until you
+  come back. After 4 minutes the addon says so but keeps listening, so a late answer
+  still shows up.
 - **50 replies per UI session.** WoW loads each addon only once per session, so each
   reply needs a fresh slot. `/reload` resets them all.
 - **Shift-click items and quests into the box** (while it has focus) to ask about them.
