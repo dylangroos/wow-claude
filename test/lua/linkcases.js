@@ -103,4 +103,19 @@ run('ClaudeBridge_WaypointCommand = function(a) WAYCMD = a end; SlashCmdList.CLA
 assert.strictEqual(evalStr('WAYCMD'), 'clear');
 run('SlashCmdList.CLAUDEBRIDGE("way")', 'wp6');
 assert.strictEqual(evalStr('WAYCMD'), '');
+// A question that merely starts with "way" is still a question.
+run('WAYCMD = "untouched"; SlashCmdList.CLAUDEBRIDGE("way to Booty Bay?")', 'wp7');
+assert.strictEqual(evalStr('WAYCMD'), 'untouched', 'not taken for the waypoint command');
+assert.strictEqual(P.parsePayload(sentPayload()).text, 'way to Booty Bay?');
+run('SlashCmdList.CLAUDEBRIDGE("cancel")', 'wp8');
+// Without Waypoint.lua loaded (a new .toc file needs a full restart), say so instead of staying silent.
+const restart = "Waypoints aren't loaded yet. Restart the game";
+run('SAVED_WC, SAVED_SW = ClaudeBridge_WaypointCommand, ClaudeBridge_SetWaypoint; ClaudeBridge_WaypointCommand = nil; ClaudeBridge_SetWaypoint = nil; SlashCmdList.CLAUDEBRIDGE("way")', 'wp9');
+assert.ok(evalStr('LINES[#LINES]').includes(restart), evalStr('LINES[#LINES]'));
+run('SlashCmdList.CLAUDEBRIDGE("way clear")', 'wp10');
+assert.ok(evalStr('LINES[#LINES]').includes(restart), evalStr('LINES[#LINES]'));
+run('ClaudeBridge_Send("where?")', 'wp11');
+run(P.slotLua(P.parsePayload(sentPayload()).id, 'Over there.', { waypoint: { zone: 'Elwynn Forest', x: 1, y: 1, label: 'x' } }), 'wpslot3');
+assert.ok(evalStr('LINES[#LINES]').includes(restart), evalStr('LINES[#LINES]'));
+run('ClaudeBridge_WaypointCommand, ClaudeBridge_SetWaypoint = SAVED_WC, SAVED_SW', 'wp12');
 console.log('Waypoint hook tests passed.');

@@ -1138,4 +1138,4 @@ Then restart the bridge (Ctrl+C in its terminal, then `node bridge\bridge.js`) a
 4. `/reload`. The arrow comes back.
 5. `/claude way clear`. The arrow goes away.
 
-If the arrow points the wrong way (for example mirrored), the world axes are swapped: in `relative`, swap `tw.x`/`tw.y` and `pw.x`/`pw.y`. Re-run `waypointtest.js` after adjusting its fake world to match.
+If the arrow is off: face north (the minimap's N at the top) with a waypoint due north. If the arrow points sideways, the world axes are swapped: in `relative`, swap `tw.x`/`tw.y` and `pw.x`/`pw.y`. If it points up but east and west come out reversed, negate the angle (`SetRotation(-angle)`). Adjust `waypointtest.js`'s fake world to match and re-run it. Also check the map pin and line draw above the map tiles; if nothing shows, `/dump ClaudeBridgeDB.waypointError`.

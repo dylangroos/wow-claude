@@ -21,6 +21,8 @@ local function object(name)
     elseif k == "IsShown" then return function(self) return self._shown end
     elseif k == "SetText" then return function(self, s) self._text = s end
     elseif k == "SetRotation" then return function(self, r) self._rot = r end
+    elseif k == "SetFrameLevel" then return function(self, l) self._level = l end
+    elseif k == "GetFrameLevel" then return function(self) return rawget(self, "_level") or 1 end
     elseif k == "GetWidth" then return function(self) return self._w end
     elseif k == "GetHeight" then return function(self) return self._h end
     elseif k == "SetScript" then return function(self, n, fn) self["_" .. n] = fn; if n == "OnEvent" then EVENTS[#EVENTS + 1] = fn end end
@@ -151,6 +153,7 @@ assert.strictEqual(evalStr('ClaudeBridgeArrow.text._text'), 'Hogger: in Durotar'
 // Westfall is on the same continent: distance across the zone border works.
 run('ClaudeBridge_SetWaypoint({ zone = "westfall > Sentinel Hill", x = 50, y = 50, label = "Sentinel Hill" })', 'west');
 assert.strictEqual(num('ClaudeBridgeDB.waypoint.mapID'), 1436);
+assert.strictEqual(evalStr('ClaudeBridgeDB.waypoint.zone'), 'Westfall', "the game's own spelling, not Claude's");
 near(num('ClaudeBridgeArrow.arrow._rot'), Math.PI / 2, 'due west: arrow points left');
 assert.strictEqual(evalStr('ClaudeBridgeArrow.text._text'), 'Sentinel Hill\n1000 yd');
 
@@ -178,6 +181,16 @@ assert.strictEqual(evalStr("ClaudeBridgeDB.waypointError"), "nil");
 assert.strictEqual(evalStr("ClaudeBridgeArrow:IsShown()"), "true");
 run("ClaudeBridge_ClearWaypoint()", "tidy");
 
+// A persistent arrow error at login is caught, not thrown.
+run(src, "Waypoint.lua"); // as after a /reload, but keep the login handlers to fire by hand
+run(`ClaudeBridge_SetWaypoint(${hogger})`, "lset");
+run('local real = C_Map.GetWorldPosFromMapPos; C_Map.GetWorldPosFromMapPos = function() error("no world pos") end; LOGIN_OK, LOGIN_ERR = pcall(function() for _, h in ipairs(EVENTS) do h(nil, "PLAYER_LOGIN") end end); C_Map.GetWorldPosFromMapPos = real', "lboom");
+assert.strictEqual(evalStr("LOGIN_OK"), "true", evalStr("LOGIN_ERR"));
+assert.ok(evalStr("SAID[#SAID]").startsWith("Waypoint arrow stopped:"), evalStr("SAID[#SAID]"));
+assert.strictEqual(evalStr("ClaudeBridgeArrow:IsShown()"), "false");
+assert.notStrictEqual(evalStr("ClaudeBridgeDB.waypointError"), "nil");
+run("ClaudeBridge_ClearWaypoint()", "ltidy");
+
 // Scenario: The world map shows a pin and a line
 run(`WorldMapFrame = OBJECT("WorldMapFrame")
   WorldMapFrame.ScrollContainer = { Child = OBJECT("Canvas") }
@@ -187,7 +200,10 @@ run(`WorldMapFrame = OBJECT("WorldMapFrame")
 login(); // hooks the map at PLAYER_LOGIN
 run('PLAYER = { map = 1429, x = 0.5, y = 0.5 }; ClaudeBridge_SetWaypoint({ zone = "Elwynn Forest", x = 25.6, y = 78.4, label = "Hogger" })', 'mset');
 run('WorldMapFrame:Show(); WorldMapFrame._hook_OnUpdate(WorldMapFrame, 0.2)', 'mtick');
-run('PIN, LINE = WorldMapFrame.ScrollContainer.Child._children[1], WorldMapFrame.ScrollContainer.Child._children[2]', 'mget');
+run('PIN, LINE = ClaudeBridgeMapOverlay._children[1], ClaudeBridgeMapOverlay._children[2]', 'mget');
+// They live on an overlay frame well above the canvas, so the map tiles don't cover them.
+assert.strictEqual(num('ClaudeBridgeMapOverlay._level'), num('WorldMapFrame.ScrollContainer.Child:GetFrameLevel()') + 500);
+assert.strictEqual(num('#WorldMapFrame.ScrollContainer.Child._children'), 0, 'nothing drawn straight on the canvas');
 assert.strictEqual(evalStr('PIN:IsShown()'), 'true');
 assert.strictEqual(evalStr('PIN._points[1][1]'), 'CENTER');
 near(num('PIN._points[1][4]'), 256, 'pin x on canvas');

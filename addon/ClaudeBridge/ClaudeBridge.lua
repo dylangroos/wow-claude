@@ -40,6 +40,8 @@ local function addLine(text, r, g, b)
   if ui then ui.log:AddMessage(text, r or 1, g or 1, b or 1) end
 end
 
+local WAYPOINTS_MISSING = "Waypoints aren't loaded yet. Restart the game (a /reload doesn't load new addon files)."
+
 local function setStatus(text)
   if ui then ui.status:SetText(text or "") end
 end
@@ -727,9 +729,13 @@ function ClaudeBridge_OnReply(id, text, extra)
   showUI(false)
   for line in (text .. "\n"):gmatch("(.-)\n") do addLine(line) end
   addLine(" ")
-  if extra and extra.waypoint and ClaudeBridge_SetWaypoint then
-    local ok, err = pcall(ClaudeBridge_SetWaypoint, extra.waypoint)
-    if not ok then addLine("Couldn't set the waypoint: " .. tostring(err), 1, 0.3, 0.3) end
+  if extra and extra.waypoint then
+    if ClaudeBridge_SetWaypoint then
+      local ok, err = pcall(ClaudeBridge_SetWaypoint, extra.waypoint)
+      if not ok then addLine("Couldn't set the waypoint: " .. tostring(err), 1, 0.3, 0.3) end
+    else
+      addLine(WAYPOINTS_MISSING, 1, 0.3, 0.3)
+    end
   end
 end
 
@@ -771,8 +777,12 @@ SlashCmdList.CLAUDEBRIDGE = function(msg)
   elseif msg == "new" then
     showUI(false)
     ClaudeBridge_Send("!new")
-  elseif msg == "way" or msg:find("^way%s") then
-    if ClaudeBridge_WaypointCommand then ClaudeBridge_WaypointCommand((msg:gsub("^way%s*", ""))) end
+  elseif msg == "way" or msg == "way clear" then
+    if ClaudeBridge_WaypointCommand then
+      ClaudeBridge_WaypointCommand(msg == "way" and "" or "clear")
+    else
+      addLine(WAYPOINTS_MISSING, 1, 0.3, 0.3)
+    end
   elseif msg == "selftest" then
     showUI(false)
     addLine("Self-test: sending a screenshot to the bridge (Claude isn't asked)...", 0.6, 0.6, 0.6)

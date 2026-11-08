@@ -132,6 +132,8 @@ function ClaudeBridge_SetWaypoint(w)
     return
   end
   local zone = w.zone:gsub("%s*>.*$", "")
+  local info = C_Map.GetMapInfo(mapID)
+  zone = (info and info.name) or zone -- the game's own spelling
   ClaudeBridgeDB.waypoint = { mapID = mapID, zone = zone, x = w.x, y = w.y, label = w.label }
   ClaudeBridgeDB.waypointError = nil
   arrivedUntil = 0
@@ -154,7 +156,13 @@ end
 local ev = CreateFrame("Frame")
 ev:RegisterEvent("PLAYER_LOGIN")
 ev:SetScript("OnEvent", function()
-  if ClaudeBridgeDB.waypoint then ClaudeBridge_WaypointUpdate() end
+  if not ClaudeBridgeDB.waypoint then return end
+  local ok, err = pcall(ClaudeBridge_WaypointUpdate)
+  if not ok then -- same as the arrow's own OnUpdate: no raw error at every login
+    if arrow then arrow:Hide() end
+    ClaudeBridgeDB.waypointError = tostring(err)
+    say("Waypoint arrow stopped: " .. tostring(err) .. ". Ask again or /reload to retry.", 1, 0.3, 0.3)
+  end
 end)
 
 ----------------------------------------------------------------------------
@@ -167,10 +175,14 @@ function ClaudeBridge_WaypointMapUpdate()
   local canvas = WorldMapFrame and WorldMapFrame.ScrollContainer and WorldMapFrame.ScrollContainer.Child
   if not canvas then return end
   if not pin then
-    pin = canvas:CreateTexture(nil, "OVERLAY")
+    -- The map tiles are child frames of the canvas and draw above its own regions, so draw on a frame above them.
+    local ov = CreateFrame("Frame", "ClaudeBridgeMapOverlay", canvas)
+    ov:SetAllPoints(canvas)
+    ov:SetFrameLevel(canvas:GetFrameLevel() + 500)
+    pin = ov:CreateTexture(nil, "OVERLAY")
     pin:SetSize(24, 24)
     pin:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcon_1")
-    line = canvas:CreateLine(nil, "OVERLAY")
+    line = ov:CreateLine(nil, "OVERLAY")
     line:SetThickness(4)
     line:SetColorTexture(1, 0.82, 0, 0.8)
   end
