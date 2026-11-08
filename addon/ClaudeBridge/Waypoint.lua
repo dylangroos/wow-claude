@@ -1,6 +1,7 @@
--- Claude Bridge waypoints. Claude's set_waypoint tool arrives with a reply
--- (ClaudeBridge_OnReply -> ClaudeBridge_SetWaypoint). An arrow on screen turns
--- toward the spot and counts down the yards.
+-- Claude Bridge waypoints. Claude's set_waypoints tool arrives with a reply
+-- (ClaudeBridge_OnReply -> ClaudeBridge_SetWaypoints): a chain of stops, saved in
+-- ClaudeBridgeDB.waypoints = { stops, current }. An arrow on screen turns
+-- toward the current stop and counts down the yards; arriving moves on to the next.
 
 local ARRIVE_YARDS = 10
 local TICK = 0.05                       -- seconds between arrow updates
@@ -11,6 +12,25 @@ local arrivedUntil = 0                  -- keep "Arrived" on screen until this G
 
 local function say(text, r, g, b)
   if ClaudeBridge_Print then ClaudeBridge_Print(text, r, g, b) end
+end
+
+-- The waypoint saved by the previous version (one spot) becomes a chain of one.
+local function migrate()
+  local old = ClaudeBridgeDB.waypoint
+  if not old then return end
+  ClaudeBridgeDB.waypoint = nil
+  if old.mapID then ClaudeBridgeDB.waypoints = { stops = { old }, current = 1 } end
+end
+
+-- The current stop's name for the arrow: "Cave (2/3)", or just "Hogger" for a chain of one.
+local function stopName(c)
+  local s = c.stops[c.current]
+  if #c.stops == 1 then return s.label end
+  return string.format("%s (%d/%d)", s.label, c.current, #c.stops)
+end
+
+local function at(s)
+  return string.format("%s, %s %.1f, %.1f", s.label, s.zone, s.x, s.y)
 end
 
 -- The zone's uiMapID, found by name among all maps under the top world map.
@@ -88,57 +108,94 @@ local function buildArrow()
 end
 
 function ClaudeBridge_WaypointUpdate()
-  local wp = ClaudeBridgeDB.waypoint
-  if not wp then
+  local c = ClaudeBridgeDB.waypoints
+  if not c then
     if arrow and GetTime() >= arrivedUntil then arrow:Hide() end
     return
   end
   if not arrow then buildArrow() end
   arrow:Show()
+  local wp = c.stops[c.current]
+  local name = stopName(c)
   local state, yards, angle = relative(wp)
   if state == "ok" and yards <= ARRIVE_YARDS then
-    ClaudeBridgeDB.waypoint = nil
+    if c.current < #c.stops then
+      c.current = c.current + 1
+      say(string.format("Arrived: %s. Next: %s (%d of %d).", wp.label, c.stops[c.current].label, c.current, #c.stops))
+      return ClaudeBridge_WaypointUpdate() -- point at the next stop right away
+    end
+    ClaudeBridgeDB.waypoints = nil
     arrivedUntil = GetTime() + 3
     arrow.arrow:Hide()
     arrow.text:SetText("Arrived: " .. wp.label)
   elseif state == "ok" then
     arrow.arrow:SetRotation(angle)
     arrow.arrow:Show()
-    arrow.text:SetText(string.format("%s\n%d yd", wp.label, math.floor(yards + 0.5)))
+    arrow.text:SetText(string.format("%s\n%d yd", name, math.floor(yards + 0.5)))
   elseif state == "elsewhere" then
     arrow.arrow:Hide()
-    arrow.text:SetText(wp.label .. ": in " .. wp.zone)
+    arrow.text:SetText(name .. ": in " .. wp.zone)
   else
     arrow.arrow:Hide()
-    arrow.text:SetText(wp.label)
+    arrow.text:SetText(name)
   end
 end
 
 function ClaudeBridge_ClearWaypoint()
-  ClaudeBridgeDB.waypoint = nil
+  ClaudeBridgeDB.waypoints = nil
   arrivedUntil = 0
   if arrow then arrow:Hide() end
 end
 
-local function describe(wp)
-  return string.format("Waypoint: %s, %s %.1f, %.1f. /claude way clear removes it.", wp.label, wp.zone, wp.x, wp.y)
-end
-
--- Called with the waypoint that came with Claude's answer.
-function ClaudeBridge_SetWaypoint(w)
-  local mapID = findMap(w.zone)
-  if not mapID then
-    say("Couldn't find the zone " .. w.zone .. " on the map, so no arrow.", 1, 0.3, 0.3)
+-- Prints the chain: one line for a single waypoint, else a header and one line per stop.
+local function describe(c)
+  if #c.stops == 1 then
+    say("Waypoint: " .. at(c.stops[1]) .. ". /claude way clear removes it.")
     return
   end
-  local zone = w.zone:gsub("%s*>.*$", "")
-  local info = C_Map.GetMapInfo(mapID)
-  zone = (info and info.name) or zone -- the game's own spelling
-  ClaudeBridgeDB.waypoint = { mapID = mapID, zone = zone, x = w.x, y = w.y, label = w.label }
+  say(string.format("Route, stop %d of %d. /claude way clear removes it.", c.current, #c.stops))
+  for i, s in ipairs(c.stops) do
+    local mark = (i < c.current and " (done)") or (i == c.current and " <- now") or ""
+    say(string.format("%d. %s%s", i, at(s), mark))
+  end
+end
+
+-- Called with the chain that came with Claude's answer: { {zone, x, y, label}, ... }.
+-- Every zone is looked up first; one unknown zone rejects the whole chain.
+function ClaudeBridge_SetWaypoints(list)
+  local stops = {}
+  for i, w in ipairs(list) do
+    local mapID = findMap(w.zone)
+    if not mapID then
+      say("Couldn't find the zone " .. w.zone .. " on the map, so no arrow.", 1, 0.3, 0.3)
+      return
+    end
+    local info = C_Map.GetMapInfo(mapID)
+    local zone = (info and info.name) or w.zone:gsub("%s*>.*$", "") -- the game's own spelling
+    stops[i] = { mapID = mapID, zone = zone, x = w.x, y = w.y, label = w.label }
+  end
+  if #stops == 0 then return end
+  ClaudeBridgeDB.waypoints = { stops = stops, current = 1 }
   ClaudeBridgeDB.waypointError = nil
   arrivedUntil = 0
-  say(describe(ClaudeBridgeDB.waypoint))
+  describe(ClaudeBridgeDB.waypoints)
   ClaudeBridge_WaypointUpdate()
+end
+
+-- A single waypoint: a chain of one.
+function ClaudeBridge_SetWaypoint(w)
+  ClaudeBridge_SetWaypoints({ w })
+end
+
+-- The "way" character-info field: where the chain stands, so Claude can skip or change stops.
+function ClaudeBridge_WaypointContext()
+  local c = ClaudeBridgeDB.waypoints
+  if not c then return "none" end
+  local s = string.format("stop %d of %d. Now: %s", c.current, #c.stops, at(c.stops[c.current]))
+  local rest = {}
+  for i = c.current + 1, #c.stops do rest[#rest + 1] = at(c.stops[i]) end
+  if #rest > 0 then s = s .. ". Then: " .. table.concat(rest, "; ") end
+  return s
 end
 
 -- /claude way [clear]
@@ -146,8 +203,8 @@ function ClaudeBridge_WaypointCommand(arg)
   if arg == "clear" then
     ClaudeBridge_ClearWaypoint()
     say("Waypoint cleared.")
-  elseif ClaudeBridgeDB.waypoint then
-    say(describe(ClaudeBridgeDB.waypoint))
+  elseif ClaudeBridgeDB.waypoints then
+    describe(ClaudeBridgeDB.waypoints)
   else
     say("No waypoint. Ask Claude where something is to get one.")
   end
@@ -156,7 +213,8 @@ end
 local ev = CreateFrame("Frame")
 ev:RegisterEvent("PLAYER_LOGIN")
 ev:SetScript("OnEvent", function()
-  if not ClaudeBridgeDB.waypoint then return end
+  migrate()
+  if not ClaudeBridgeDB.waypoints then return end
   local ok, err = pcall(ClaudeBridge_WaypointUpdate)
   if not ok then -- same as the arrow's own OnUpdate: no raw error at every login
     if arrow then arrow:Hide() end
@@ -188,7 +246,8 @@ function ClaudeBridge_WaypointMapUpdate()
   end
   pin:Hide()
   line:Hide()
-  local wp = ClaudeBridgeDB.waypoint
+  local c = ClaudeBridgeDB.waypoints
+  local wp = c and c.stops[c.current]
   if not (wp and WorldMapFrame:IsShown()) then return end
   local shown = WorldMapFrame:GetMapID()
   local tc, tw = C_Map.GetWorldPosFromMapPos(wp.mapID, CreateVector2D(wp.x / 100, wp.y / 100))

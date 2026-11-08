@@ -114,7 +114,7 @@ const hogger = '{ zone = "Elwynn Forest", x = 50, y = 40, label = "Hogger" }';
 
 // Scenario: The arrow points at the waypoint
 run(`ClaudeBridge_SetWaypoint(${hogger})`, 'set');
-assert.strictEqual(num('ClaudeBridgeDB.waypoint.mapID'), 1429, 'the zone, not the same-named micro map');
+assert.strictEqual(num('ClaudeBridgeDB.waypoints.stops[1].mapID'), 1429, 'the zone, not the same-named micro map');
 assert.ok(evalStr('SAID[#SAID]').startsWith('Waypoint: Hogger, Elwynn Forest 50.0, 40.0'), evalStr('SAID[#SAID]'));
 assert.strictEqual(evalStr('ClaudeBridgeArrow:IsShown()'), 'true');
 near(num('ClaudeBridgeArrow.arrow._rot'), 0, 'facing north: arrow straight up');
@@ -139,7 +139,7 @@ assert.strictEqual(evalStr('ClaudeBridgeArrow.text._text'), 'Hogger\n100 yd');
 // Scenario: Arriving clears the waypoint
 run('PLAYER.y = 0.405; ClaudeBridge_WaypointUpdate()', 'arrive'); // 5 yards short
 assert.strictEqual(evalStr('ClaudeBridgeArrow.text._text'), 'Arrived: Hogger');
-assert.strictEqual(evalStr('ClaudeBridgeDB.waypoint'), 'nil');
+assert.strictEqual(evalStr('ClaudeBridgeDB.waypoints'), 'nil');
 assert.strictEqual(evalStr('ClaudeBridgeArrow:IsShown()'), 'true', '"Arrived" stays up for a moment');
 run('NOW = 104; ClaudeBridge_WaypointUpdate()', 'later');
 assert.strictEqual(evalStr('ClaudeBridgeArrow:IsShown()'), 'false');
@@ -152,14 +152,14 @@ assert.strictEqual(evalStr('ClaudeBridgeArrow.text._text'), 'Hogger: in Durotar'
 
 // Westfall is on the same continent: distance across the zone border works.
 run('ClaudeBridge_SetWaypoint({ zone = "westfall > Sentinel Hill", x = 50, y = 50, label = "Sentinel Hill" })', 'west');
-assert.strictEqual(num('ClaudeBridgeDB.waypoint.mapID'), 1436);
-assert.strictEqual(evalStr('ClaudeBridgeDB.waypoint.zone'), 'Westfall', "the game's own spelling, not Claude's");
+assert.strictEqual(num('ClaudeBridgeDB.waypoints.stops[1].mapID'), 1436);
+assert.strictEqual(evalStr('ClaudeBridgeDB.waypoints.stops[1].zone'), 'Westfall', "the game's own spelling, not Claude's");
 near(num('ClaudeBridgeArrow.arrow._rot'), Math.PI / 2, 'due west: arrow points left');
 assert.strictEqual(evalStr('ClaudeBridgeArrow.text._text'), 'Sentinel Hill\n1000 yd');
 
 // Scenario: Clearing the waypoint by command
 run('ClaudeBridge_WaypointCommand("clear")', 'clear');
-assert.strictEqual(evalStr('ClaudeBridgeDB.waypoint'), 'nil');
+assert.strictEqual(evalStr('ClaudeBridgeDB.waypoints'), 'nil');
 assert.strictEqual(evalStr('ClaudeBridgeArrow:IsShown()'), 'false');
 assert.strictEqual(evalStr('SAID[#SAID]'), 'Waypoint cleared.');
 run('ClaudeBridge_WaypointCommand("")', 'show');
@@ -168,7 +168,7 @@ assert.ok(evalStr('SAID[#SAID]').startsWith('No waypoint.'));
 // Scenario: Unknown zone is reported
 run('ClaudeBridge_SetWaypoint({ zone = "Narnia", x = 1, y = 1, label = "Lamp post" })', 'narnia');
 assert.ok(evalStr('SAID[#SAID]').includes("Couldn't find the zone Narnia"), evalStr('SAID[#SAID]'));
-assert.strictEqual(evalStr('ClaudeBridgeDB.waypoint'), 'nil');
+assert.strictEqual(evalStr('ClaudeBridgeDB.waypoints'), 'nil');
 
 // Scenario: a failing arrow update tells the player and recovers on the next waypoint
 run(`ClaudeBridge_SetWaypoint(${hogger})`, "again");
@@ -219,5 +219,98 @@ assert.strictEqual(evalStr('PIN:IsShown()'), 'false');
 assert.strictEqual(evalStr('LINE:IsShown()'), 'false');
 run('MAP_SHOWN = 1429; ClaudeBridge_ClearWaypoint(); WorldMapFrame._hook_OnUpdate(WorldMapFrame, 0.2)', 'mclear');
 assert.strictEqual(evalStr('PIN:IsShown()'), 'false');
+
+// ---- chains ----
+// Murloc camp is 100 yards north of the player, Cave 200, Hogger 300, all in Elwynn.
+run('ClaudeBridge_ClearWaypoint(); WorldMapFrame:Hide(); PLAYER = { map = 1429, x = 0.5, y = 0.5 }; FACING = 0; NOW = 200', 'c0');
+const route = `{ { zone = "Elwynn Forest", x = 50, y = 40, label = "Murloc camp" },
+  { zone = "Elwynn Forest", x = 50, y = 30, label = "Cave" },
+  { zone = "Elwynn Forest", x = 50, y = 20, label = "Hogger" } }`;
+const said = () => { const n = num('#SAID'); return Array.from({ length: n }, (_, i) => evalStr(`SAID[${i + 1}]`)); };
+
+// Scenario: A new chain starts at the first stop
+run(`SAID = {}; ClaudeBridge_SetWaypoints(${route})`, 'c1');
+assert.strictEqual(evalStr('ClaudeBridgeArrow.text._text'), 'Murloc camp (1/3)\n100 yd');
+assert.deepStrictEqual(said(), [
+  'Route, stop 1 of 3. /claude way clear removes it.',
+  '1. Murloc camp, Elwynn Forest 50.0, 40.0 <- now',
+  '2. Cave, Elwynn Forest 50.0, 30.0',
+  '3. Hogger, Elwynn Forest 50.0, 20.0',
+]);
+
+// Scenario: Arriving at a middle stop moves on to the next
+run('SAID = {}; PLAYER.y = 0.405; ClaudeBridge_WaypointUpdate()', 'c2'); // 5 yards short of Murloc camp
+assert.deepStrictEqual(said(), ['Arrived: Murloc camp. Next: Cave (2 of 3).']);
+assert.strictEqual(evalStr('ClaudeBridgeArrow.text._text'), 'Cave (2/3)\n105 yd');
+assert.strictEqual(num('ClaudeBridgeDB.waypoints.current'), 2);
+
+// Scenario: The way command lists the chain
+run('SAID = {}; ClaudeBridge_WaypointCommand("")', 'c3');
+assert.deepStrictEqual(said(), [
+  'Route, stop 2 of 3. /claude way clear removes it.',
+  '1. Murloc camp, Elwynn Forest 50.0, 40.0 (done)',
+  '2. Cave, Elwynn Forest 50.0, 30.0 <- now',
+  '3. Hogger, Elwynn Forest 50.0, 20.0',
+]);
+
+// Scenario: The world map shows only the current stop
+run('PLAYER.y = 0.5; MAP_SHOWN = 1429; WorldMapFrame:Show(); WorldMapFrame._hook_OnUpdate(WorldMapFrame, 0.2)', 'c4');
+assert.strictEqual(num('#ClaudeBridgeMapOverlay._children'), 2, 'one pin and one line, nothing per stop');
+assert.strictEqual(evalStr('PIN:IsShown()'), 'true');
+near(num('PIN._points[1][4]'), 500, 'pin on Cave (x)');
+near(num('PIN._points[1][5]'), -0.3 * 667, 'pin on Cave (y)');
+near(num('LINE._end[2]'), -0.3 * 667, 'line ends at Cave');
+run('WorldMapFrame:Hide()', 'c4b');
+
+// Scenario: A chain survives a reload
+login();
+assert.ok(evalStr('ClaudeBridgeArrow.text._text').startsWith('Cave (2/3)'), evalStr('ClaudeBridgeArrow.text._text'));
+
+// Scenario: Clearing removes the whole chain
+run('ClaudeBridge_WaypointCommand("clear")', 'c5');
+assert.strictEqual(evalStr('ClaudeBridgeArrow:IsShown()'), 'false');
+assert.strictEqual(evalStr('ClaudeBridgeDB.waypoints'), 'nil');
+
+// Scenario: Arriving at the last stop clears the chain
+run(`ClaudeBridge_SetWaypoints(${route}); ClaudeBridgeDB.waypoints.current = 3; PLAYER.y = 0.205; ClaudeBridge_WaypointUpdate()`, 'c6');
+assert.strictEqual(evalStr('ClaudeBridgeArrow.text._text'), 'Arrived: Hogger');
+assert.strictEqual(evalStr('ClaudeBridgeDB.waypoints'), 'nil');
+run('PLAYER.y = 0.5; NOW = 300; ClaudeBridge_WaypointUpdate()', 'c6b');
+
+// Scenario: A chain of one shows no counter
+run('ClaudeBridge_SetWaypoints({ { zone = "Elwynn Forest", x = 50, y = 40, label = "Hogger" } })', 'c7');
+assert.strictEqual(evalStr('ClaudeBridgeArrow.text._text'), 'Hogger\n100 yd');
+
+// Scenario: An unknown zone rejects the whole chain
+run(`SAID = {}; ClaudeBridge_SetWaypoints({ { zone = "Elwynn Forest", x = 1, y = 1, label = "A" }, { zone = "Narnia", x = 1, y = 1, label = "Lamp post" } })`, 'c8');
+assert.ok(said().some((l) => l.includes("Couldn't find the zone Narnia")), said().join(' | '));
+assert.strictEqual(num('#ClaudeBridgeDB.waypoints.stops'), 1);
+assert.strictEqual(evalStr('ClaudeBridgeDB.waypoints.stops[1].label'), 'Hogger');
+
+// Scenario: A stop in another continent shows its zone and place in the chain
+run(`ClaudeBridge_SetWaypoints({ { zone = "Elwynn Forest", x = 50, y = 40, label = "Murloc camp" },
+  { zone = "Durotar", x = 50, y = 50, label = "Cave" }, { zone = "Elwynn Forest", x = 50, y = 20, label = "Hogger" } })
+  ClaudeBridgeDB.waypoints.current = 2; ClaudeBridge_WaypointUpdate()`, 'c9');
+assert.strictEqual(evalStr('ClaudeBridgeArrow.arrow:IsShown()'), 'false');
+assert.strictEqual(evalStr('ClaudeBridgeArrow.text._text'), 'Cave (2/3): in Durotar');
+
+// Scenario: Character info lists the stops still to visit
+run(`ClaudeBridgeDB.waypoints = { current = 2, stops = {
+  { mapID = 1436, zone = "Westfall", x = 45.2, y = 33.1, label = "Murloc camp" },
+  { mapID = 1429, zone = "Elwynn Forest", x = 40, y = 20.1, label = "Cave" },
+  { mapID = 1429, zone = "Elwynn Forest", x = 25.6, y = 78.4, label = "Hogger" } } }`, 'c10');
+assert.strictEqual(evalStr('ClaudeBridge_WaypointContext()'),
+  'stop 2 of 3. Now: Cave, Elwynn Forest 40.0, 20.1. Then: Hogger, Elwynn Forest 25.6, 78.4');
+run('ClaudeBridge_ClearWaypoint()', 'c11');
+assert.strictEqual(evalStr('ClaudeBridge_WaypointContext()'), 'none');
+
+// Scenario: A waypoint saved by the previous version carries over
+run('ClaudeBridgeDB.waypoint = { mapID = 1429, zone = "Elwynn Forest", x = 50, y = 40, label = "Hogger" }', 'c12');
+login();
+assert.ok(evalStr('ClaudeBridgeArrow.text._text').startsWith('Hogger'), evalStr('ClaudeBridgeArrow.text._text'));
+assert.strictEqual(num('#ClaudeBridgeDB.waypoints.stops'), 1);
+assert.strictEqual(evalStr('ClaudeBridgeDB.waypoints.stops[1].label'), 'Hogger');
+assert.strictEqual(evalStr('ClaudeBridgeDB.waypoint'), 'nil');
+run('ClaudeBridge_ClearWaypoint()', 'c13');
 
 console.log('Waypoint tests passed.');
