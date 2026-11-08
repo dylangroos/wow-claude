@@ -40,6 +40,8 @@ local function addLine(text, r, g, b)
   if ui then ui.log:AddMessage(text, r or 1, g or 1, b or 1) end
 end
 
+local WAYPOINTS_MISSING = "Waypoints aren't loaded yet. Restart the game (a /reload doesn't load new addon files)."
+
 local function setStatus(text)
   if ui then ui.status:SetText(text or "") end
 end
@@ -132,6 +134,12 @@ function ClaudeBridge_Toggle()
   C_Timer.After(0, function() if ui:IsShown() then ui.input:SetFocus() end end)
 end
 
+-- Lets Waypoint.lua print into the Claude window.
+function ClaudeBridge_Print(text, r, g, b)
+  showUI(false)
+  addLine(text, r or 0.6, g or 0.6, b or 0.6)
+end
+
 ----------------------------------------------------------------------------
 -- Outgoing: prompt -> pixel strip -> Screenshot() -> Screenshots folder
 ----------------------------------------------------------------------------
@@ -208,6 +216,13 @@ local CTX_READERS = {
       local zone, sub = GetRealZoneText(), GetSubZoneText()
       if sub and sub ~= "" and sub ~= zone then return zone .. " > " .. sub end
       return zone
+    end },
+  { "pos", function()
+      if not (C_Map and C_Map.GetBestMapForUnit) then return nil end
+      local map = C_Map.GetBestMapForUnit("player")
+      local p = map and C_Map.GetPlayerMapPosition(map, "player")
+      if not p then return nil end -- dungeons hide the position
+      return string.format("%.1f, %.1f", p.x * 100, p.y * 100)
     end },
   { "money", function()
       local c = GetMoney()
@@ -703,7 +718,7 @@ function ClaudeBridge_Poll()
 end
 
 -- Called by the reply slot file the bridge wrote.
-function ClaudeBridge_OnReply(id, text)
+function ClaudeBridge_OnReply(id, text, extra)
   if not pending or id ~= pending.id then return end -- left over from before a /reload
   -- Claude has now seen this context, unless the bridge reported a failure.
   if pending.ctx and not text:find("^error:") then
@@ -714,6 +729,22 @@ function ClaudeBridge_OnReply(id, text)
   showUI(false)
   for line in (text .. "\n"):gmatch("(.-)\n") do addLine(line) end
   addLine(" ")
+  if extra and extra.waypoint then
+    if ClaudeBridge_SetWaypoint then
+      local ok, err = pcall(ClaudeBridge_SetWaypoint, extra.waypoint)
+      if not ok then addLine("Couldn't set the waypoint: " .. tostring(err), 1, 0.3, 0.3) end
+    else
+      addLine(WAYPOINTS_MISSING, 1, 0.3, 0.3)
+    end
+  elseif extra and extra.clear_waypoint then
+    if ClaudeBridge_ClearWaypoint then
+      local ok, err = pcall(ClaudeBridge_ClearWaypoint)
+      if ok then addLine("Waypoint cleared.", 0.6, 0.6, 0.6)
+      else addLine("Couldn't clear the waypoint: " .. tostring(err), 1, 0.3, 0.3) end
+    else
+      addLine(WAYPOINTS_MISSING, 1, 0.3, 0.3)
+    end
+  end
 end
 
 ----------------------------------------------------------------------------
@@ -754,6 +785,12 @@ SlashCmdList.CLAUDEBRIDGE = function(msg)
   elseif msg == "new" then
     showUI(false)
     ClaudeBridge_Send("!new")
+  elseif msg == "way" or msg == "way clear" then
+    if ClaudeBridge_WaypointCommand then
+      ClaudeBridge_WaypointCommand(msg == "way" and "" or "clear")
+    else
+      addLine(WAYPOINTS_MISSING, 1, 0.3, 0.3)
+    end
   elseif msg == "selftest" then
     showUI(false)
     addLine("Self-test: sending a screenshot to the bridge (Claude isn't asked)...", 0.6, 0.6, 0.6)

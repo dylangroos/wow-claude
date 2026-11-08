@@ -1,4 +1,4 @@
-INSERTED, EVENTS, MOD = {}, {}, false
+INSERTED, EVENTS, MOD, LINES = {}, {}, false, {}
 function hooksecurefunc(a, b, c)
   local tbl, name, fn = a, b, c
   if type(a) == "string" then tbl, name, fn = _G, a, b end

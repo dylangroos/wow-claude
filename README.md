@@ -60,6 +60,7 @@ Leave it running while you play. In game:
 | `/claude <question>` | Ask directly from chat. |
 | `/claude new` | Start a fresh conversation. |
 | `/claude context` | Show the character info Claude gets. `context off` / `context on` toggles it. |
+| `/claude way` | Show the waypoint Claude set. `way clear` removes it (or right-click the arrow). |
 | `/claude cancel` | Stop waiting for an answer. |
 | `/claude selftest` | Round-trip check without asking Claude. |
 
@@ -75,10 +76,14 @@ the input box; Esc closes it.
 - **Shift-click items and quests into the box** (while it has focus) to ask about them.
   The item's tooltip and whatever you wear in that slot go along, or the quest's text
   and objectives with your progress.
+- **Waypoints.** Ask where something is ("where's the Westfall flight master?") and
+  Claude can set a waypoint: an arrow at the top of the screen turns toward it and
+  shows the yards, and the world map shows a pin with a line from you. Drag the arrow
+  to move it. It clears itself within 10 yards.
 - **Character info is sent as diffs.** The first question sends everything; later
   ones only send what changed (zone, gold, a new quest...).
-- **Answer-only.** Claude can search and read the web but can't edit files or run
-  commands. See the `--tools` / `--allowedTools` lines in `bridge/bridge.js`.
+- **Answer-only.** Claude can search and read the web and set waypoints, but can't edit
+  files or run commands. See the `--tools` / `--allowedTools` lines in `bridge/bridge.js`.
 - A brief flash of colored blocks in the top-left corner is the question going out.
 - Uninstall: `node bridge\setup.js --uninstall`.
 
@@ -109,3 +114,4 @@ Designs and plans for upcoming features live in `docs/specs/`.
 - `bridge/protocol.js`: strip codec, TGA/PNG readers, payload format, reply-slot files
 - `bridge/bridge.js`: watches Screenshots, calls Claude, writes replies
 - `bridge/setup.js`: installs the addon and its reply slots
+- `bridge/waypoint-mcp.js`: the set_waypoint tool (a tiny MCP server Claude Code starts)

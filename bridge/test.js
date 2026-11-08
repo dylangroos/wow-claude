@@ -13,6 +13,7 @@ const { execFileSync } = require('child_process');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cb-test-'));
 process.env.CB_CONFIG = path.join(tmp, 'config.json');
 process.env.CB_STATE = path.join(tmp, 'state.json');
+process.env.CB_AGENT_HOME = path.join(tmp, 'agent-home');
 
 const P = require('./protocol');
 const { setup } = require('./setup');
@@ -141,6 +142,7 @@ if (real) assert.strictEqual(P.decodeStrip(readImage(path.join(realShots, real))
 console.log(`Codec checks passed (TGA, PNG, JPEG${real ? ', real screenshot ignored' : ''}).`);
 
 (async () => {
+  await require('./waypoint-mcp.test')(tmp);
   // --- fake WoW install ---
   const wow = path.join(tmp, '_forever_');
   const svDir = path.join(wow, 'WTF', 'Account', '12345#1', 'SavedVariables');
@@ -155,12 +157,25 @@ console.log(`Codec checks passed (TGA, PNG, JPEG${real ? ', real screenshot igno
   // Sent seconds before the bridge started: must still be answered.
   writeTga(renderScreen('0e0e0e|!selftest'), path.join(shots, 'WoWScrnShot_early.tga'));
 
-  // Fake Claude: echoes the prompt back in the same JSON shape as `claude -p --output-format json`.
+  // Fake Claude: echoes the prompt back in the same JSON shape as `claude -p --output-format json`,
+  // and plays the waypoint tools by appending to the file named in the bridge's MCP config.
+  // Like real Claude Code with nobody to click "allow", it only uses tools on --allowedTools.
   const fake = path.join(tmp, 'fake-claude.js');
   fs.writeFileSync(fake, `
+    const fs = require('fs');
     let s = ''; process.stdin.on('data', d => s += d);
     process.stdin.on('end', () => {
       const resumed = process.argv.includes('--resume');
+      const at = process.argv.indexOf('--mcp-config');
+      const file = at > 0 ? JSON.parse(fs.readFileSync(process.argv[at + 1], 'utf8')).mcpServers.wow.env.CB_WAYPOINT_FILE : null;
+      const allowed = (process.argv[process.argv.indexOf('--allowedTools') + 1] || '').split(',');
+      const use = (tool, action) => { if (allowed.includes('mcp__wow__' + tool)) fs.appendFileSync(file, JSON.stringify(action) + '\\n'); };
+      const wp = (zone, x, y, label) => use('set_waypoint', { zone, x, y, label });
+      const clear = () => use('clear_waypoint', { clear: true });
+      if (s.includes('where is Hogger')) wp('Elwynn Forest', 25.6, 78.4, 'Hogger');
+      if (s.includes('two spots')) { wp('Elwynn Forest', 10, 10, 'First'); wp('Westfall', 56.5, 52.6, 'Sentinel Hill'); }
+      if (s.includes('made it')) { wp('Elwynn Forest', 1, 1, 'Old'); clear(); }
+      if (s.includes('next stop')) { clear(); wp('Westfall', 56.2, 47.6, 'Gryan Stoutmantle'); }
       process.stdout.write(JSON.stringify({ result: 'Echo: ' + s + (resumed ? ' (resumed)' : '') + ' ]]', session_id: 'sess-1', is_error: false }));
     });`);
 
@@ -207,6 +222,40 @@ console.log(`Codec checks passed (TGA, PNG, JPEG${real ? ', real screenshot igno
   await waitFor(() => slot(3).includes('c0ffee'));
   assert.ok(slot(3).includes('Character: Testmage, level 11 Human Mage\nEquipped: Ranged: Greater Magic Wand (17)\n\n[Question]\nupgrade?'), slot(3));
   bridge.cursor = 3; // reuse slot 3 below
+
+  // Scenario: Asking where something is sets a waypoint
+  bridge.cursor = 3;
+  writeTga(renderScreen('a0a0a0|where is Hogger?'), path.join(shots, 'WoWScrnShot_wp1.tga'));
+  await waitFor(() => slot(3).includes('a0a0a0'));
+  assert.match(slot(3), /^ClaudeBridge_OnReply\("a0a0a0", \[(=+)\[\n[\s\S]*\]\1\], \{ waypoint = \{ zone = \[=+\[\nElwynn Forest\]=+\], x = 25\.6, y = 78\.4, label = \[=+\[\nHogger\]=+\] \} \}\)\n$/, slot(3));
+
+  // Scenario: Only the last waypoint of an answer is kept
+  bridge.cursor = 3;
+  writeTga(renderScreen('b0b0b0|two spots please'), path.join(shots, 'WoWScrnShot_wp2.tga'));
+  await waitFor(() => slot(3).includes('b0b0b0'));
+  assert.ok(slot(3).includes('Sentinel Hill') && !slot(3).includes('First'), slot(3));
+
+  // Scenario: An answer without a waypoint carries none (the last answer's file is not reused)
+  bridge.cursor = 3;
+  writeTga(renderScreen('c1c1c1|ok thanks'), path.join(shots, 'WoWScrnShot_wp3.tga'));
+  await waitFor(() => slot(3).includes('c1c1c1'));
+  assert.ok(!slot(3).includes('waypoint'), slot(3));
+  assert.ok(fs.existsSync(path.join(process.env.CB_AGENT_HOME, 'mcp.json')), 'MCP config written under CB_AGENT_HOME, not the real agent-home');
+
+  // Scenario: Claude clears the waypoint (set then clear in one answer: the clear wins)
+  bridge.cursor = 3;
+  writeTga(renderScreen('d1d1d1|made it, clear the arrow'), path.join(shots, 'WoWScrnShot_wp4.tga'));
+  await waitFor(() => slot(3).includes('d1d1d1'));
+  assert.match(slot(3), /, \{ clear_waypoint = true \}\)\n$/, slot(3));
+  assert.ok(!slot(3).includes('waypoint = {'), slot(3));
+
+  // Scenario: The last action in an answer wins (clear then set: the new waypoint)
+  bridge.cursor = 3;
+  writeTga(renderScreen('e1e1e1|next stop gryan'), path.join(shots, 'WoWScrnShot_wp5.tga'));
+  await waitFor(() => slot(3).includes('e1e1e1'));
+  assert.ok(slot(3).includes('Gryan Stoutmantle') && !slot(3).includes('clear_waypoint'), slot(3));
+
+  bridge.cursor = 3; // reuse slot 3 again
 
   // Self-test never calls Claude.
   writeTga(renderScreen('5e1f00|!selftest'), path.join(shots, 'WoWScrnShot_3.tga'));
