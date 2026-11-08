@@ -141,6 +141,7 @@ if (real) assert.strictEqual(P.decodeStrip(readImage(path.join(realShots, real))
 console.log(`Codec checks passed (TGA, PNG, JPEG${real ? ', real screenshot ignored' : ''}).`);
 
 (async () => {
+  await require('./waypoint-mcp.test')(tmp);
   // --- fake WoW install ---
   const wow = path.join(tmp, '_forever_');
   const svDir = path.join(wow, 'WTF', 'Account', '12345#1', 'SavedVariables');
