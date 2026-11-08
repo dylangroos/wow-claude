@@ -300,14 +300,17 @@ function luaLongString(text) {
   return `[${eq}[\n${text}]${eq}]`;
 }
 
-// extra.waypoint = { zone, x, y, label } rides along as OnReply's third argument,
-// so a reply left over from before a /reload (ignored by OnReply) sets nothing.
+// extra.waypoint = { zone, x, y, label } or extra.clear_waypoint = true rides along
+// as OnReply's third argument, so a reply left over from before a /reload
+// (ignored by OnReply) changes nothing.
 function slotLua(id, text, extra) {
   let tail = '';
   if (extra && extra.waypoint) {
     const w = extra.waypoint;
     const s = (t) => luaLongString(cleanForWow(t));
     tail = `, { waypoint = { zone = ${s(w.zone)}, x = ${Number(w.x)}, y = ${Number(w.y)}, label = ${s(w.label)} } }`;
+  } else if (extra && extra.clear_waypoint) {
+    tail = ', { clear_waypoint = true }';
   }
   return `ClaudeBridge_OnReply("${id}", ${luaLongString(cleanForWow(text))}${tail})\n`;
 }

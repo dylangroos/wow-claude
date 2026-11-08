@@ -736,6 +736,14 @@ function ClaudeBridge_OnReply(id, text, extra)
     else
       addLine(WAYPOINTS_MISSING, 1, 0.3, 0.3)
     end
+  elseif extra and extra.clear_waypoint then
+    if ClaudeBridge_ClearWaypoint then
+      local ok, err = pcall(ClaudeBridge_ClearWaypoint)
+      if ok then addLine("Waypoint cleared.", 0.6, 0.6, 0.6)
+      else addLine("Couldn't clear the waypoint: " .. tostring(err), 1, 0.3, 0.3) end
+    else
+      addLine(WAYPOINTS_MISSING, 1, 0.3, 0.3)
+    end
   end
 end
 

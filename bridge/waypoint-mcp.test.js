@@ -39,7 +39,7 @@ module.exports = async function waypointServerTests(tmp) {
     assert.deepStrictEqual(init.result.capabilities, { tools: {} });
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
     const list = await call('tools/list', {});
-    assert.deepStrictEqual(list.result.tools.map((t) => t.name), ['set_waypoint']);
+    assert.deepStrictEqual(list.result.tools.map((t) => t.name), ['set_waypoint', 'clear_waypoint']);
 
     // Scenario: Bad coordinates are rejected
     const bad = await call('tools/call', { name: 'set_waypoint', arguments: { zone: 'Elwynn Forest', x: 140, y: 78.4, label: 'Hogger' } });
@@ -50,6 +50,12 @@ module.exports = async function waypointServerTests(tmp) {
     const good = await call('tools/call', { name: 'set_waypoint', arguments: { zone: ' Elwynn Forest ', x: 25.6, y: 78.4, label: 'Hogger' } });
     assert.ok(!good.result.isError, JSON.stringify(good));
     assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { zone: 'Elwynn Forest', x: 25.6, y: 78.4, label: 'Hogger' });
+
+    // Scenario: Claude clears the waypoint (recorded after the set, so the last line wins)
+    const clear = await call('tools/call', { name: 'clear_waypoint', arguments: {} });
+    assert.ok(!clear.result.isError, JSON.stringify(clear));
+    const lines = fs.readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.deepStrictEqual(lines[lines.length - 1], { clear: true });
 
     const unknown = await call('resources/list', {});
     assert.strictEqual(unknown.error.code, -32601);

@@ -158,7 +158,8 @@ console.log(`Codec checks passed (TGA, PNG, JPEG${real ? ', real screenshot igno
   writeTga(renderScreen('0e0e0e|!selftest'), path.join(shots, 'WoWScrnShot_early.tga'));
 
   // Fake Claude: echoes the prompt back in the same JSON shape as `claude -p --output-format json`,
-  // and plays the set_waypoint tool by appending to the file named in the bridge's MCP config.
+  // and plays the waypoint tools by appending to the file named in the bridge's MCP config.
+  // Like real Claude Code with nobody to click "allow", it only uses tools on --allowedTools.
   const fake = path.join(tmp, 'fake-claude.js');
   fs.writeFileSync(fake, `
     const fs = require('fs');
@@ -167,9 +168,14 @@ console.log(`Codec checks passed (TGA, PNG, JPEG${real ? ', real screenshot igno
       const resumed = process.argv.includes('--resume');
       const at = process.argv.indexOf('--mcp-config');
       const file = at > 0 ? JSON.parse(fs.readFileSync(process.argv[at + 1], 'utf8')).mcpServers.wow.env.CB_WAYPOINT_FILE : null;
-      const wp = (zone, x, y, label) => fs.appendFileSync(file, JSON.stringify({ zone, x, y, label }) + '\\n');
+      const allowed = (process.argv[process.argv.indexOf('--allowedTools') + 1] || '').split(',');
+      const use = (tool, action) => { if (allowed.includes('mcp__wow__' + tool)) fs.appendFileSync(file, JSON.stringify(action) + '\\n'); };
+      const wp = (zone, x, y, label) => use('set_waypoint', { zone, x, y, label });
+      const clear = () => use('clear_waypoint', { clear: true });
       if (s.includes('where is Hogger')) wp('Elwynn Forest', 25.6, 78.4, 'Hogger');
       if (s.includes('two spots')) { wp('Elwynn Forest', 10, 10, 'First'); wp('Westfall', 56.5, 52.6, 'Sentinel Hill'); }
+      if (s.includes('made it')) { wp('Elwynn Forest', 1, 1, 'Old'); clear(); }
+      if (s.includes('next stop')) { clear(); wp('Westfall', 56.2, 47.6, 'Gryan Stoutmantle'); }
       process.stdout.write(JSON.stringify({ result: 'Echo: ' + s + (resumed ? ' (resumed)' : '') + ' ]]', session_id: 'sess-1', is_error: false }));
     });`);
 
@@ -235,6 +241,19 @@ console.log(`Codec checks passed (TGA, PNG, JPEG${real ? ', real screenshot igno
   await waitFor(() => slot(3).includes('c1c1c1'));
   assert.ok(!slot(3).includes('waypoint'), slot(3));
   assert.ok(fs.existsSync(path.join(process.env.CB_AGENT_HOME, 'mcp.json')), 'MCP config written under CB_AGENT_HOME, not the real agent-home');
+
+  // Scenario: Claude clears the waypoint (set then clear in one answer: the clear wins)
+  bridge.cursor = 3;
+  writeTga(renderScreen('d1d1d1|made it, clear the arrow'), path.join(shots, 'WoWScrnShot_wp4.tga'));
+  await waitFor(() => slot(3).includes('d1d1d1'));
+  assert.match(slot(3), /, \{ clear_waypoint = true \}\)\n$/, slot(3));
+  assert.ok(!slot(3).includes('waypoint = {'), slot(3));
+
+  // Scenario: The last action in an answer wins (clear then set: the new waypoint)
+  bridge.cursor = 3;
+  writeTga(renderScreen('e1e1e1|next stop gryan'), path.join(shots, 'WoWScrnShot_wp5.tga'));
+  await waitFor(() => slot(3).includes('e1e1e1'));
+  assert.ok(slot(3).includes('Gryan Stoutmantle') && !slot(3).includes('clear_waypoint'), slot(3));
 
   bridge.cursor = 3; // reuse slot 3 again
 

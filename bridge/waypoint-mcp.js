@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// MCP server (stdio, no npm packages) that gives the bridge's Claude one tool,
-// set_waypoint. Each good call is appended as a JSON line to $CB_WAYPOINT_FILE;
-// the bridge reads the last one after Claude answers. Claude Code starts this
-// through --mcp-config (see askClaude in bridge.js).
+// MCP server (stdio, no npm packages) that gives the bridge's Claude two tools,
+// set_waypoint and clear_waypoint. Each good call is appended as a JSON line to
+// $CB_WAYPOINT_FILE ({zone,x,y,label} or {clear:true}); the bridge acts on the
+// last one after Claude answers. Claude Code starts this through --mcp-config
+// (see askClaude in bridge.js).
 const fs = require('fs');
 
 const TOOL = {
@@ -21,6 +22,23 @@ const TOOL = {
     required: ['zone', 'x', 'y', 'label'],
   },
 };
+
+const CLEAR_TOOL = {
+  name: 'clear_waypoint',
+  description: 'Remove the waypoint arrow and map line from the player\'s screen, for example when they '
+    + 'have arrived, are done with it, or ask to get rid of it.',
+  inputSchema: { type: 'object', properties: {} },
+};
+
+// Append one action line; a failed write comes back as a tool error, not a crash.
+function record(file, action, okText) {
+  try {
+    fs.appendFileSync(file, JSON.stringify(action) + '\n');
+  } catch (e) {
+    return { isError: true, content: [{ type: 'text', text: `Waypoint not saved: ${e.message}` }] };
+  }
+  return { content: [{ type: 'text', text: okText }] };
+}
 
 // Returns an error message, or null when the waypoint is good.
 function checkWaypoint(w) {
@@ -47,19 +65,15 @@ function handle(msg, file) {
     case 'ping':
       return {};
     case 'tools/list':
-      return { tools: [TOOL] };
+      return { tools: [TOOL, CLEAR_TOOL] };
     case 'tools/call': {
+      if (p.name === CLEAR_TOOL.name) return record(file, { clear: true }, 'Waypoint cleared.');
       if (p.name !== TOOL.name) return { isError: true, content: [{ type: 'text', text: `Unknown tool ${p.name}.` }] };
       const err = checkWaypoint(p.arguments);
       if (err) return { isError: true, content: [{ type: 'text', text: `Waypoint not set: ${err}.` }] };
       const a = p.arguments;
       const w = { zone: a.zone.trim(), x: a.x, y: a.y, label: a.label.trim() };
-      try {
-        fs.appendFileSync(file, JSON.stringify(w) + '\n');
-      } catch (e) {
-        return { isError: true, content: [{ type: 'text', text: `Waypoint not saved: ${e.message}` }] };
-      }
-      return { content: [{ type: 'text', text: `Waypoint set: ${w.label} in ${w.zone} at ${w.x}, ${w.y}.` }] };
+      return record(file, w, `Waypoint set: ${w.label} in ${w.zone} at ${w.x}, ${w.y}.`);
     }
     default:
       return undefined;

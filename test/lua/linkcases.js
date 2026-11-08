@@ -117,5 +117,15 @@ assert.ok(evalStr('LINES[#LINES]').includes(restart), evalStr('LINES[#LINES]'));
 run('ClaudeBridge_Send("where?")', 'wp11');
 run(P.slotLua(P.parsePayload(sentPayload()).id, 'Over there.', { waypoint: { zone: 'Elwynn Forest', x: 1, y: 1, label: 'x' } }), 'wpslot3');
 assert.ok(evalStr('LINES[#LINES]').includes(restart), evalStr('LINES[#LINES]'));
-run('ClaudeBridge_WaypointCommand, ClaudeBridge_SetWaypoint = SAVED_WC, SAVED_SW', 'wp12');
+// A clear reply without Waypoint.lua loaded says so too.
+run('SAVED_CW = ClaudeBridge_ClearWaypoint; ClaudeBridge_ClearWaypoint = nil; ClaudeBridge_Send("made it")', 'wp13');
+run(P.slotLua(P.parsePayload(sentPayload()).id, 'Nice.', { clear_waypoint: true }), 'wpslot4');
+assert.ok(evalStr('LINES[#LINES]').includes(restart), evalStr('LINES[#LINES]'));
+run('ClaudeBridge_WaypointCommand, ClaudeBridge_SetWaypoint, ClaudeBridge_ClearWaypoint = SAVED_WC, SAVED_SW, SAVED_CW', 'wp12');
+// Scenario: Claude clears the waypoint, so the arrow goes away and the chat says so.
+run('SAVED_CW = ClaudeBridge_ClearWaypoint; CLEARED = nil; ClaudeBridge_ClearWaypoint = function() CLEARED = true end; ClaudeBridge_Send("made it, clear the arrow")', 'wp14');
+run(P.slotLua(P.parsePayload(sentPayload()).id, 'Done.', { clear_waypoint: true }), 'wpslot5');
+assert.strictEqual(evalStr('tostring(CLEARED)'), 'true');
+assert.strictEqual(evalStr('LINES[#LINES]'), 'Waypoint cleared.');
+run('ClaudeBridge_ClearWaypoint = SAVED_CW', 'wp15');
 console.log('Waypoint hook tests passed.');

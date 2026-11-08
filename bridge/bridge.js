@@ -19,7 +19,7 @@ const STATE_PATH = process.env.CB_STATE || path.join(ROOT, 'state.json');
 const AGENT_HOME = process.env.CB_AGENT_HOME || path.join(ROOT, 'agent-home');
 const WAYPOINT_FILE = path.join(AGENT_HOME, 'waypoint.jsonl');
 const MCP_CONFIG = path.join(AGENT_HOME, 'mcp.json');
-const WAYPOINT_TOOL = 'mcp__wow__set_waypoint';
+const WAYPOINT_TOOLS = 'mcp__wow__set_waypoint,mcp__wow__clear_waypoint';
 
 const POLL_MS = 250;
 const CLAUDE_TIMEOUT_MS = 200_000;
@@ -42,6 +42,8 @@ const SYSTEM_PROMPT = [
   '  game shows it, x and y (0-100) and a short label. An arrow in game then points the player there.',
   '  Prefer the spot nearest the player\'s "Map position". Mention the coordinates in your answer too.',
   '  Never guess coordinates: if you can\'t find them, say so and don\'t call the tool.',
+  '- When the player has arrived, is done with the waypoint, or asks to remove the arrow, call',
+  '  clear_waypoint.',
 ].join('\n');
 
 function log(...args) {
@@ -83,14 +85,16 @@ function readImage(file) {
   return P.readPng(jpegToPng(file));
 }
 
-// The last good set_waypoint call of this answer, or null.
-function readWaypoint() {
+// The last good waypoint action of this answer, as the reply's extra:
+// { waypoint: {zone,x,y,label} } or { clear_waypoint: true }; null when there is none.
+function readWaypointAction() {
   let lines;
   try { lines = fs.readFileSync(WAYPOINT_FILE, 'utf8').split('\n').filter(Boolean); } catch { return null; }
   for (let i = lines.length - 1; i >= 0; i--) {
     try {
-      const w = JSON.parse(lines[i]);
-      if (!checkWaypoint(w)) return w;
+      const a = JSON.parse(lines[i]);
+      if (a && a.clear === true) return { clear_waypoint: true };
+      if (!checkWaypoint(a)) return { waypoint: a };
     } catch { /* a torn line: try the one before */ }
   }
   return null;
@@ -153,7 +157,7 @@ class Bridge {
       '-p',
       '--output-format', 'json',
       '--tools', 'WebSearch,WebFetch',          // answer-only: no file edits, no shell (MCP tools are separate)
-      '--allowedTools', `WebSearch,WebFetch,${WAYPOINT_TOOL}`, // pre-approved: nobody is there to click "allow"
+      '--allowedTools', `WebSearch,WebFetch,${WAYPOINT_TOOLS}`, // pre-approved: nobody is there to click "allow"
       '--mcp-config', MCP_CONFIG,
       '--strict-mcp-config',                    // only our server, not the PC's other MCP servers
       '--append-system-prompt', SYSTEM_PROMPT,
@@ -188,7 +192,7 @@ class Bridge {
         } else if (j.is_error) {
           text = `error: ${text}`;
         }
-        resolve({ ok: !j.is_error, text, waypoint: j.is_error ? null : readWaypoint() });
+        resolve({ ok: !j.is_error, text, extra: j.is_error ? null : readWaypointAction() });
       });
       child.stdin.end(prompt);
     });
@@ -213,8 +217,10 @@ class Bridge {
       const started = Date.now();
       const res = await this.askClaude(P.buildPrompt(text, ctx));
       log(`Claude ${res.ok ? 'answered' : 'failed'} in ${((Date.now() - started) / 1000).toFixed(1)}s.`);
-      if (res.waypoint) log(`Waypoint: ${res.waypoint.label}, ${res.waypoint.zone} ${res.waypoint.x}, ${res.waypoint.y}`);
-      this.writeReply(id, res.text, res.waypoint ? { waypoint: res.waypoint } : undefined);
+      const w = res.extra && res.extra.waypoint;
+      if (w) log(`Waypoint: ${w.label}, ${w.zone} ${w.x}, ${w.y}`);
+      if (res.extra && res.extra.clear_waypoint) log('Waypoint cleared.');
+      this.writeReply(id, res.text, res.extra || undefined);
     }
     this.busy = false;
   }
