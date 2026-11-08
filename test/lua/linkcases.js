@@ -78,3 +78,29 @@ run('local n0 = #TIMERS; ClaudeBridge_Toggle(); HK_TIMER = TIMERS[#TIMERS]; HK_N
 assert.strictEqual(L1('HK_NEW'), 1, 'focus deferred to a timer');
 assert.strictEqual(evalStr('BINDING_NAME_CLAUDEBRIDGE_TOGGLE'), 'Open/close the Claude window');
 console.log('Hotkey tests passed.');
+
+// ---- waypoint hooks in ClaudeBridge.lua ----
+run('SlashCmdList.CLAUDEBRIDGE("cancel")', 'wp0'); // the broken-tooltip question above is still pending
+// Scenario: Claude knows where the player is standing
+run('C_Map = { GetBestMapForUnit = function() return 1429 end, GetPlayerMapPosition = function() return { x = 0.421, y = 0.659 } end }', 'wp1');
+run('ClaudeBridge_Send("where is the inn?")', 'wp2');
+const mp = P.parsePayload(sentPayload());
+assert.deepStrictEqual(mp.ctx.find(([k]) => k === 'pos'), ['pos', '42.1, 65.9']);
+assert.ok(P.buildPrompt(mp.text, mp.ctx).includes('Map position (x, y on the zone map, 0-100): 42.1, 65.9'));
+// The reply's waypoint goes to Waypoint.lua, after the answer is shown. The slot text is the bridge's own.
+run('WP_GOT = nil; ClaudeBridge_SetWaypoint = function(w) WP_GOT = w end', 'wp3');
+run(P.slotLua(mp.id, 'Hogger is at 25.6, 78.4.', { waypoint: { zone: 'Elwynn Forest', x: 25.6, y: 78.4, label: 'Hogger' } }), 'wpslot');
+assert.strictEqual(evalStr('WP_GOT.zone'), 'Elwynn Forest');
+assert.strictEqual(L1('WP_GOT.x'), 25.6);
+assert.strictEqual(L1('WP_GOT.y'), 78.4);
+assert.strictEqual(evalStr('WP_GOT.label'), 'Hogger');
+// A broken Waypoint.lua can't break replies.
+run('ClaudeBridge_SetWaypoint = function() error("boom") end; ClaudeBridge_Send("again")', 'wp4');
+run(P.slotLua(P.parsePayload(sentPayload()).id, 'ok', { waypoint: { zone: 'Elwynn Forest', x: 1, y: 1, label: 'x' } }), 'wpslot2');
+assert.ok(evalStr('LINES[#LINES]').includes("Couldn't set the waypoint"), evalStr('LINES[#LINES]'));
+// /claude way ... reaches Waypoint.lua.
+run('ClaudeBridge_WaypointCommand = function(a) WAYCMD = a end; SlashCmdList.CLAUDEBRIDGE("way clear")', 'wp5');
+assert.strictEqual(evalStr('WAYCMD'), 'clear');
+run('SlashCmdList.CLAUDEBRIDGE("way")', 'wp6');
+assert.strictEqual(evalStr('WAYCMD'), '');
+console.log('Waypoint hook tests passed.');

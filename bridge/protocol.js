@@ -224,6 +224,7 @@ const CTX_LABELS = {
   char: 'Character',
   xp: 'XP',
   zone: 'Location',
+  pos: 'Map position (x, y on the zone map, 0-100)',
   money: 'Money',
   talents: 'Talents',
   prof: 'Professions',
