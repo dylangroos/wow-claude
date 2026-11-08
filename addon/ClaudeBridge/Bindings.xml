@@ -1,0 +1,5 @@
+<Bindings>
+  <Binding name="CLAUDEBRIDGE_TOGGLE" header="CLAUDEBRIDGE" category="ADDONS">
+    ClaudeBridge_Toggle()
+  </Binding>
+</Bindings>

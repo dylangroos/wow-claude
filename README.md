@@ -63,6 +63,10 @@ Leave it running while you play. In game:
 | `/claude cancel` | Stop waiting for an answer. |
 | `/claude selftest` | Round-trip check without asking Claude. |
 
+**Hotkey:** set one under Game Menu > Options > Keybindings > AddOns > Claude Bridge
+("Open/close the Claude window"). It opens the window with the cursor already in
+the input box; Esc closes it.
+
 ## Things to know
 
 - **Game sound must be on.** The ready signal is a silent .wav on the Master channel.
@@ -87,6 +91,17 @@ node bridge\test.js
 Runs the whole loop offline against a fake WoW folder and a fake Claude: the strip
 codec on TGA, PNG and JPEG screenshots, the reply slots, sessions, character info
 parsing, and slot resets on `/reload`.
+
+The addon's own tests run the real `ClaudeBridge.lua` in [fengari](https://github.com/fengari-lua/fengari)
+(Lua in JS) with stubbed WoW APIs: character info, shift-click links, the hotkey.
+They need two npm packages, installed once outside the bridge:
+
+```
+npm install --prefix test/lua/.tools fengari luaparse
+node test/lua/run.js
+```
+
+Designs and plans for upcoming features live in `docs/specs/`.
 
 ## Files
 

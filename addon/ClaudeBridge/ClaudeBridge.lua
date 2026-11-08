@@ -122,6 +122,16 @@ local function showUI(focus)
   if focus then ui.input:SetFocus() end
 end
 
+-- Key binding (Bindings.xml; set it under Key Bindings > AddOns).
+BINDING_HEADER_CLAUDEBRIDGE = "Claude Bridge"
+BINDING_NAME_CLAUDEBRIDGE_TOGGLE = "Open/close the Claude window"
+function ClaudeBridge_Toggle()
+  if ui and ui:IsShown() then ui:Hide(); return end
+  showUI(false)
+  -- Focus on the next frame, so the key that opened the window isn't typed into it.
+  C_Timer.After(0, function() if ui:IsShown() then ui.input:SetFocus() end end)
+end
+
 ----------------------------------------------------------------------------
 -- Outgoing: prompt -> pixel strip -> Screenshot() -> Screenshots folder
 ----------------------------------------------------------------------------

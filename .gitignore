@@ -2,3 +2,5 @@ config.json
 state.json
 agent-home/
 node_modules/
+test/lua/.tools/
+test/lua/linktest.js
