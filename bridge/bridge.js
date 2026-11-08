@@ -11,7 +11,7 @@ const os = require('os');
 const path = require('path');
 const { spawn, execFileSync } = require('child_process');
 const P = require('./protocol');
-const { checkWaypoint } = require('./waypoint-mcp');
+const { checkStops } = require('./waypoint-mcp');
 
 const ROOT = path.resolve(__dirname, '..');
 const CONFIG_PATH = process.env.CB_CONFIG || path.join(ROOT, 'config.json');
@@ -19,7 +19,7 @@ const STATE_PATH = process.env.CB_STATE || path.join(ROOT, 'state.json');
 const AGENT_HOME = process.env.CB_AGENT_HOME || path.join(ROOT, 'agent-home');
 const WAYPOINT_FILE = path.join(AGENT_HOME, 'waypoint.jsonl');
 const MCP_CONFIG = path.join(AGENT_HOME, 'mcp.json');
-const WAYPOINT_TOOLS = 'mcp__wow__set_waypoint,mcp__wow__clear_waypoint';
+const WAYPOINT_TOOLS = 'mcp__wow__set_waypoint,mcp__wow__set_waypoints,mcp__wow__clear_waypoint';
 
 const POLL_MS = 250;
 const CLAUDE_TIMEOUT_MS = 200_000;
@@ -42,8 +42,12 @@ const SYSTEM_PROMPT = [
   '  game shows it, x and y (0-100) and a short label. An arrow in game then points the player there.',
   '  Prefer the spot nearest the player\'s "Map position". Mention the coordinates in your answer too.',
   '  Never guess coordinates: if you can\'t find them, say so and don\'t call the tool.',
-  '- When the player has arrived, is done with the waypoint, or asks to remove the arrow, call',
-  '  clear_waypoint.',
+  '- For a route (several legs to one place) or several places to visit, call set_waypoints once with',
+  '  every stop in travel order instead. For several places, start with the one nearest the player.',
+  '- The [Game state] "Waypoints" line shows the arrow\'s route and the stops still to visit. To skip, add',
+  '  or reorder stops, call set_waypoints again with the stops still to visit.',
+  '- When the player has arrived, is done with the waypoints, or asks to remove the arrow, call',
+  '  clear_waypoint. It removes the whole route.',
 ].join('\n');
 
 function log(...args) {
@@ -86,7 +90,7 @@ function readImage(file) {
 }
 
 // The last good waypoint action of this answer, as the reply's extra:
-// { waypoint: {zone,x,y,label} } or { clear_waypoint: true }; null when there is none.
+// { waypoints: [{zone,x,y,label}, ...] } or { clear_waypoint: true }; null when there is none.
 function readWaypointAction() {
   let lines;
   try { lines = fs.readFileSync(WAYPOINT_FILE, 'utf8').split('\n').filter(Boolean); } catch { return null; }
@@ -94,7 +98,7 @@ function readWaypointAction() {
     try {
       const a = JSON.parse(lines[i]);
       if (a && a.clear === true) return { clear_waypoint: true };
-      if (!checkWaypoint(a)) return { waypoint: a };
+      if (a && !checkStops(a.stops)) return { waypoints: a.stops };
     } catch { /* a torn line: try the one before */ }
   }
   return null;
@@ -217,8 +221,8 @@ class Bridge {
       const started = Date.now();
       const res = await this.askClaude(P.buildPrompt(text, ctx));
       log(`Claude ${res.ok ? 'answered' : 'failed'} in ${((Date.now() - started) / 1000).toFixed(1)}s.`);
-      const w = res.extra && res.extra.waypoint;
-      if (w) log(`Waypoint: ${w.label}, ${w.zone} ${w.x}, ${w.y}`);
+      const ws = res.extra && res.extra.waypoints;
+      if (ws) log(`Waypoints: ${ws.length} stop${ws.length === 1 ? '' : 's'}, first ${ws[0].label}, ${ws[0].zone} ${ws[0].x}, ${ws[0].y}`);
       if (res.extra && res.extra.clear_waypoint) log('Waypoint cleared.');
       this.writeReply(id, res.text, res.extra || undefined);
     }

@@ -1,7 +1,7 @@
 # Waypoint chains: Claude sets a list of stops in order
 
 Status: design approved in chat (2026-11-08). Builds on
-`2026-11-08-waypoint-design.md`. Plan to follow.
+`2026-11-08-waypoint-design.md`. Plan: `2026-11-08-waypoint-chain-plan.md`.
 
 ## Purpose
 

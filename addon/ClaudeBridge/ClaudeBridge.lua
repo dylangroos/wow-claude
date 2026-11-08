@@ -350,6 +350,9 @@ local CTX_READERS = {
       end
       return #out > 0 and table.concat(out, "; ") or "empty"
     end },
+  { "way", function() -- the arrow's route, from Waypoint.lua; nothing when that file isn't loaded
+      return ClaudeBridge_WaypointContext and ClaudeBridge_WaypointContext()
+    end },
 }
 
 -- Which info functions this client has, saved for debugging (/reload writes it).
@@ -752,9 +755,9 @@ function ClaudeBridge_OnReply(id, text, extra)
   showUI(false)
   for line in (text .. "\n"):gmatch("(.-)\n") do addLine(line) end
   addLine(" ")
-  if extra and extra.waypoint then
-    if ClaudeBridge_SetWaypoint then
-      local ok, err = pcall(ClaudeBridge_SetWaypoint, extra.waypoint)
+  if extra and extra.waypoints then
+    if ClaudeBridge_SetWaypoints then
+      local ok, err = pcall(ClaudeBridge_SetWaypoints, extra.waypoints)
       if not ok then addLine("Couldn't set the waypoint: " .. tostring(err), 1, 0.3, 0.3) end
     else
       addLine(WAYPOINTS_MISSING, 1, 0.3, 0.3)
