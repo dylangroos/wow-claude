@@ -156,3 +156,59 @@ ev:RegisterEvent("PLAYER_LOGIN")
 ev:SetScript("OnEvent", function()
   if ClaudeBridgeDB.waypoint then ClaudeBridge_WaypointUpdate() end
 end)
+
+----------------------------------------------------------------------------
+-- World map: a pin on the waypoint and a line from the player to it
+----------------------------------------------------------------------------
+
+local pin, line, mapHooked
+
+function ClaudeBridge_WaypointMapUpdate()
+  local canvas = WorldMapFrame and WorldMapFrame.ScrollContainer and WorldMapFrame.ScrollContainer.Child
+  if not canvas then return end
+  if not pin then
+    pin = canvas:CreateTexture(nil, "OVERLAY")
+    pin:SetSize(24, 24)
+    pin:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcon_1")
+    line = canvas:CreateLine(nil, "OVERLAY")
+    line:SetThickness(4)
+    line:SetColorTexture(1, 0.82, 0, 0.8)
+  end
+  pin:Hide()
+  line:Hide()
+  local wp = ClaudeBridgeDB.waypoint
+  if not (wp and WorldMapFrame:IsShown()) then return end
+  local shown = WorldMapFrame:GetMapID()
+  local tc, tw = C_Map.GetWorldPosFromMapPos(wp.mapID, CreateVector2D(wp.x / 100, wp.y / 100))
+  if not tw then return end
+  local _, t = C_Map.GetMapPosFromWorldPos(tc, tw, shown)
+  if not t or t.x < 0 or t.x > 1 or t.y < 0 or t.y > 1 then return end -- not on this map
+  local w, h = canvas:GetWidth(), canvas:GetHeight()
+  pin:ClearAllPoints()
+  pin:SetPoint("CENTER", canvas, "TOPLEFT", t.x * w, -t.y * h)
+  pin:Show()
+  local p = C_Map.GetPlayerMapPosition(shown, "player")
+  if p then
+    line:SetStartPoint("TOPLEFT", canvas, p.x * w, -p.y * h)
+    line:SetEndPoint("TOPLEFT", canvas, t.x * w, -t.y * h)
+    line:Show()
+  end
+end
+
+local function hookMap()
+  if mapHooked or not WorldMapFrame then return end
+  mapHooked = true
+  local acc = 0
+  WorldMapFrame:HookScript("OnUpdate", function(_, elapsed)
+    acc = acc + elapsed
+    if acc < 0.1 then return end
+    acc = 0
+    local ok, err = pcall(ClaudeBridge_WaypointMapUpdate)
+    if not ok then ClaudeBridgeDB.waypointError = tostring(err) end
+  end)
+end
+
+local mapEv = CreateFrame("Frame")
+mapEv:RegisterEvent("PLAYER_LOGIN")
+mapEv:RegisterEvent("ADDON_LOADED") -- in case the world map addon loads later
+mapEv:SetScript("OnEvent", hookMap)

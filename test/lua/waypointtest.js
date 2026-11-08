@@ -178,4 +178,30 @@ assert.strictEqual(evalStr("ClaudeBridgeDB.waypointError"), "nil");
 assert.strictEqual(evalStr("ClaudeBridgeArrow:IsShown()"), "true");
 run("ClaudeBridge_ClearWaypoint()", "tidy");
 
+// Scenario: The world map shows a pin and a line
+run(`WorldMapFrame = OBJECT("WorldMapFrame")
+  WorldMapFrame.ScrollContainer = { Child = OBJECT("Canvas") }
+  WorldMapFrame.ScrollContainer.Child._w, WorldMapFrame.ScrollContainer.Child._h = 1000, 667
+  WorldMapFrame.GetMapID = function() return MAP_SHOWN end
+  MAP_SHOWN = 1429`, 'map');
+login(); // hooks the map at PLAYER_LOGIN
+run('PLAYER = { map = 1429, x = 0.5, y = 0.5 }; ClaudeBridge_SetWaypoint({ zone = "Elwynn Forest", x = 25.6, y = 78.4, label = "Hogger" })', 'mset');
+run('WorldMapFrame:Show(); WorldMapFrame._hook_OnUpdate(WorldMapFrame, 0.2)', 'mtick');
+run('PIN, LINE = WorldMapFrame.ScrollContainer.Child._children[1], WorldMapFrame.ScrollContainer.Child._children[2]', 'mget');
+assert.strictEqual(evalStr('PIN:IsShown()'), 'true');
+assert.strictEqual(evalStr('PIN._points[1][1]'), 'CENTER');
+near(num('PIN._points[1][4]'), 256, 'pin x on canvas');
+near(num('PIN._points[1][5]'), -0.784 * 667, 'pin y on canvas');
+assert.strictEqual(evalStr('LINE:IsShown()'), 'true');
+near(num('LINE._start[1]'), 500, 'line starts at the player (x)');
+near(num('LINE._start[2]'), -0.5 * 667, 'line starts at the player (y)');
+near(num('LINE._end[1]'), 256, 'line ends at the pin (x)');
+near(num('LINE._end[2]'), -0.784 * 667, 'line ends at the pin (y)');
+// A map that doesn't contain the spot shows neither.
+run('MAP_SHOWN = 1411; WorldMapFrame._hook_OnUpdate(WorldMapFrame, 0.2)', 'mother');
+assert.strictEqual(evalStr('PIN:IsShown()'), 'false');
+assert.strictEqual(evalStr('LINE:IsShown()'), 'false');
+run('MAP_SHOWN = 1429; ClaudeBridge_ClearWaypoint(); WorldMapFrame._hook_OnUpdate(WorldMapFrame, 0.2)', 'mclear');
+assert.strictEqual(evalStr('PIN:IsShown()'), 'false');
+
 console.log('Waypoint tests passed.');
