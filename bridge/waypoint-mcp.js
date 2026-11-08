@@ -1,16 +1,16 @@
 #!/usr/bin/env node
-// MCP server (stdio, no npm packages) that gives the bridge's Claude two tools,
-// set_waypoint and clear_waypoint. Each good call is appended as a JSON line to
-// $CB_WAYPOINT_FILE ({zone,x,y,label} or {clear:true}); the bridge acts on the
-// last one after Claude answers. Claude Code starts this through --mcp-config
-// (see askClaude in bridge.js).
+// MCP server (stdio, no npm packages) that gives the bridge's Claude three tools,
+// set_waypoint, set_waypoints and clear_waypoint. Each good call is appended as a
+// JSON line to $CB_WAYPOINT_FILE ({stops:[{zone,x,y,label}, ...]} or {clear:true});
+// the bridge acts on the last one after Claude answers. Claude Code starts this
+// through --mcp-config (see askClaude in bridge.js).
 const fs = require('fs');
 
 const TOOL = {
   name: 'set_waypoint',
   description: 'Point the player to a spot in World of Warcraft: an arrow on screen turns toward it and '
     + 'the world map shows a line to it. Use the zone name as the game shows it and the zone map '
-    + 'coordinates (0-100) from a source page such as Wowhead. Never guess coordinates.',
+    + 'coordinates (0-100) from a source page such as Wowhead. Never guess coordinates. It replaces any route set earlier.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -20,6 +20,29 @@ const TOOL = {
       label: { type: 'string', description: 'Short name for the spot, for example "Hogger" (40 characters max)' },
     },
     required: ['zone', 'x', 'y', 'label'],
+  },
+};
+
+const MAX_STOPS = 10;
+
+const ROUTE_TOOL = {
+  name: 'set_waypoints',
+  description: 'Point the player through several spots in order: the arrow points at the first stop and '
+    + 'moves on to the next when they arrive. Use it for a route (legs to one place) or several places to '
+    + 'visit (start with the one nearest the player). Calling it again replaces the whole route, so use it '
+    + 'to skip, add or reorder stops. Same zone names and coordinates as set_waypoint. Never guess coordinates.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      stops: {
+        type: 'array',
+        minItems: 1,
+        maxItems: MAX_STOPS,
+        description: 'The stops in travel order',
+        items: TOOL.inputSchema,
+      },
+    },
+    required: ['stops'],
   },
 };
 
@@ -52,6 +75,20 @@ function checkWaypoint(w) {
   return text('zone', 60) || num('x') || num('y') || text('label', 40);
 }
 
+// Returns an error message naming the bad stop, or null when the list is good.
+function checkStops(stops) {
+  if (!Array.isArray(stops) || stops.length < 1 || stops.length > MAX_STOPS) {
+    return `stops must be a list of 1-${MAX_STOPS} stops`;
+  }
+  for (let i = 0; i < stops.length; i++) {
+    const err = checkWaypoint(stops[i]);
+    if (err) return `stop ${i + 1}: ${err}`;
+  }
+  return null;
+}
+
+const cleanStop = (a) => ({ zone: a.zone.trim(), x: a.x, y: a.y, label: a.label.trim() });
+
 // One JSON-RPC request -> its result, or undefined for an unknown method.
 function handle(msg, file) {
   const p = msg.params || {};
@@ -65,15 +102,21 @@ function handle(msg, file) {
     case 'ping':
       return {};
     case 'tools/list':
-      return { tools: [TOOL, CLEAR_TOOL] };
+      return { tools: [TOOL, ROUTE_TOOL, CLEAR_TOOL] };
     case 'tools/call': {
       if (p.name === CLEAR_TOOL.name) return record(file, { clear: true }, 'Waypoint cleared.');
+      if (p.name === ROUTE_TOOL.name) {
+        const stops = p.arguments && p.arguments.stops;
+        const err = checkStops(stops);
+        if (err) return { isError: true, content: [{ type: 'text', text: `Route not set: ${err}.` }] };
+        const clean = stops.map(cleanStop);
+        return record(file, { stops: clean }, `Route set: ${clean.length} ${clean.length === 1 ? 'stop' : 'stops'}, first ${clean[0].label} in ${clean[0].zone}.`);
+      }
       if (p.name !== TOOL.name) return { isError: true, content: [{ type: 'text', text: `Unknown tool ${p.name}.` }] };
       const err = checkWaypoint(p.arguments);
       if (err) return { isError: true, content: [{ type: 'text', text: `Waypoint not set: ${err}.` }] };
-      const a = p.arguments;
-      const w = { zone: a.zone.trim(), x: a.x, y: a.y, label: a.label.trim() };
-      return record(file, w, `Waypoint set: ${w.label} in ${w.zone} at ${w.x}, ${w.y}.`);
+      const w = cleanStop(p.arguments);
+      return record(file, { stops: [w] }, `Waypoint set: ${w.label} in ${w.zone} at ${w.x}, ${w.y}.`);
     }
     default:
       return undefined;
@@ -103,4 +146,4 @@ function serve(input, output, file) {
 
 if (require.main === module) serve(process.stdin, process.stdout, process.env.CB_WAYPOINT_FILE);
 
-module.exports = { TOOL, checkWaypoint, handle };
+module.exports = { TOOL, checkWaypoint, checkStops, handle };

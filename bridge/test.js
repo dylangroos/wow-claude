@@ -170,12 +170,16 @@ console.log(`Codec checks passed (TGA, PNG, JPEG${real ? ', real screenshot igno
       const file = at > 0 ? JSON.parse(fs.readFileSync(process.argv[at + 1], 'utf8')).mcpServers.wow.env.CB_WAYPOINT_FILE : null;
       const allowed = (process.argv[process.argv.indexOf('--allowedTools') + 1] || '').split(',');
       const use = (tool, action) => { if (allowed.includes('mcp__wow__' + tool)) fs.appendFileSync(file, JSON.stringify(action) + '\\n'); };
-      const wp = (zone, x, y, label) => use('set_waypoint', { zone, x, y, label });
+      const wp = (zone, x, y, label) => use('set_waypoint', { stops: [{ zone, x, y, label }] });
+      const route = (...stops) => use('set_waypoints', { stops: stops.map(([zone, x, y, label]) => ({ zone, x, y, label })) });
       const clear = () => use('clear_waypoint', { clear: true });
       if (s.includes('where is Hogger')) wp('Elwynn Forest', 25.6, 78.4, 'Hogger');
       if (s.includes('two spots')) { wp('Elwynn Forest', 10, 10, 'First'); wp('Westfall', 56.5, 52.6, 'Sentinel Hill'); }
       if (s.includes('made it')) { wp('Elwynn Forest', 1, 1, 'Old'); clear(); }
       if (s.includes('next stop')) { clear(); wp('Westfall', 56.2, 47.6, 'Gryan Stoutmantle'); }
+      if (s.includes('route to the cave')) route(['Westfall', 45.2, 33.1, 'Murloc camp'], ['Elwynn Forest', 40, 20.1, 'Cave'], ['Elwynn Forest', 25.6, 78.4, 'Hogger']);
+      if (s.includes('two routes')) { route(['Elwynn Forest', 1, 1, 'Old A'], ['Elwynn Forest', 2, 2, 'Old B']); route(['Westfall', 56.5, 52.6, 'Sentinel Hill'], ['Westfall', 56.2, 47.6, 'Gryan Stoutmantle']); }
+      if (s.includes('route then done')) { route(['Elwynn Forest', 1, 1, 'A'], ['Elwynn Forest', 2, 2, 'B']); clear(); }
       process.stdout.write(JSON.stringify({ result: 'Echo: ' + s + (resumed ? ' (resumed)' : '') + ' ]]', session_id: 'sess-1', is_error: false }));
     });`);
 
@@ -227,7 +231,7 @@ console.log(`Codec checks passed (TGA, PNG, JPEG${real ? ', real screenshot igno
   bridge.cursor = 3;
   writeTga(renderScreen('a0a0a0|where is Hogger?'), path.join(shots, 'WoWScrnShot_wp1.tga'));
   await waitFor(() => slot(3).includes('a0a0a0'));
-  assert.match(slot(3), /^ClaudeBridge_OnReply\("a0a0a0", \[(=+)\[\n[\s\S]*\]\1\], \{ waypoint = \{ zone = \[=+\[\nElwynn Forest\]=+\], x = 25\.6, y = 78\.4, label = \[=+\[\nHogger\]=+\] \} \}\)\n$/, slot(3));
+  assert.match(slot(3), /^ClaudeBridge_OnReply\("a0a0a0", \[(=+)\[\n[\s\S]*\]\1\], \{ waypoints = \{ \{ zone = \[=+\[\nElwynn Forest\]=+\], x = 25\.6, y = 78\.4, label = \[=+\[\nHogger\]=+\] \} \} \}\)\n$/, slot(3));
 
   // Scenario: Only the last waypoint of an answer is kept
   bridge.cursor = 3;
@@ -247,13 +251,32 @@ console.log(`Codec checks passed (TGA, PNG, JPEG${real ? ', real screenshot igno
   writeTga(renderScreen('d1d1d1|made it, clear the arrow'), path.join(shots, 'WoWScrnShot_wp4.tga'));
   await waitFor(() => slot(3).includes('d1d1d1'));
   assert.match(slot(3), /, \{ clear_waypoint = true \}\)\n$/, slot(3));
-  assert.ok(!slot(3).includes('waypoint = {'), slot(3));
+  assert.ok(!slot(3).includes('waypoints ='), slot(3));
 
   // Scenario: The last action in an answer wins (clear then set: the new waypoint)
   bridge.cursor = 3;
   writeTga(renderScreen('e1e1e1|next stop gryan'), path.join(shots, 'WoWScrnShot_wp5.tga'));
   await waitFor(() => slot(3).includes('e1e1e1'));
   assert.ok(slot(3).includes('Gryan Stoutmantle') && !slot(3).includes('clear_waypoint'), slot(3));
+
+  // Scenario: The reply carries the whole chain
+  bridge.cursor = 3;
+  writeTga(renderScreen('f1f1f1|route to the cave please'), path.join(shots, 'WoWScrnShot_wp6.tga'));
+  await waitFor(() => slot(3).includes('f1f1f1'));
+  assert.match(slot(3), /, \{ waypoints = \{ \{ zone = \[=+\[\nWestfall\]=+\], x = 45\.2, y = 33\.1, label = \[=+\[\nMurloc camp\]=+\] \}, \{ zone = \[=+\[\nElwynn Forest\]=+\], x = 40, y = 20\.1, label = \[=+\[\nCave\]=+\] \}, \{ zone = \[=+\[\nElwynn Forest\]=+\], x = 25\.6, y = 78\.4, label = \[=+\[\nHogger\]=+\] \} \} \}\)\n$/, slot(3));
+
+  // Scenario: Only the last chain of an answer is kept
+  bridge.cursor = 3;
+  writeTga(renderScreen('f2f2f2|two routes'), path.join(shots, 'WoWScrnShot_wp7.tga'));
+  await waitFor(() => slot(3).includes('f2f2f2'));
+  assert.ok(slot(3).includes('Sentinel Hill') && slot(3).includes('Gryan Stoutmantle') && !slot(3).includes('Old A'), slot(3));
+
+  // Scenario: Clearing after setting a chain clears
+  bridge.cursor = 3;
+  writeTga(renderScreen('f3f3f3|route then done'), path.join(shots, 'WoWScrnShot_wp8.tga'));
+  await waitFor(() => slot(3).includes('f3f3f3'));
+  assert.match(slot(3), /, \{ clear_waypoint = true \}\)\n$/, slot(3));
+  assert.ok(!slot(3).includes('waypoints ='), slot(3));
 
   bridge.cursor = 3; // reuse slot 3 again
 

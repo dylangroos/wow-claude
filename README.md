@@ -42,7 +42,8 @@ packages.
    node bridge\setup.js
    ```
    The default game folder is `D:\World of Warcraft\_forever_`. Use
-   `--wow "<path to _forever_>"` for another location.
+   `--wow "<path to _forever_>"` for another location. After pulling an update, run
+   `node bridge\setup.js` again so the game gets the new addon files, then restart the game.
 3. Start WoW: Forever. In the **AddOns** list on the character screen, make sure
    **Claude Bridge** and its reply entries are enabled.
 
@@ -60,7 +61,7 @@ Leave it running while you play. In game:
 | `/claude <question>` | Ask directly from chat. |
 | `/claude new` | Start a fresh conversation. |
 | `/claude context` | Show the character info Claude gets. `context off` / `context on` toggles it. |
-| `/claude way` | Show the waypoint Claude set. `way clear` removes it (or right-click the arrow). |
+| `/claude way` | Show the waypoint or route Claude set, stop by stop. `way clear` removes it (or right-click the arrow). |
 | `/claude cancel` | Stop waiting for an answer. |
 | `/claude selftest` | Round-trip check without asking Claude. |
 
@@ -83,7 +84,10 @@ the input box; Esc closes it.
 - **Waypoints.** Ask where something is ("where's the Westfall flight master?") and
   Claude can set a waypoint: an arrow at the top of the screen turns toward it and
   shows the yards, and the world map shows a pin with a line from you. Drag the arrow
-  to move it. It clears itself within 10 yards.
+  to move it. It clears itself within 10 yards. For a route or several places
+  ("take me to the Deadmines", "where are the six things for this quest?") Claude can
+  set a chain of stops: the arrow moves on to the next stop when you arrive. Claude
+  sees which stops are left, so you can ask it to skip or change one.
 - **Character info is sent as diffs.** The first question sends everything; later
   ones only send what changed (zone, gold, a new quest...).
 - **Answer-only.** Claude can search and read the web and set waypoints, but can't edit
@@ -118,4 +122,4 @@ Designs and plans for upcoming features live in `docs/specs/`.
 - `bridge/protocol.js`: strip codec, TGA/PNG readers, payload format, reply-slot files
 - `bridge/bridge.js`: watches Screenshots, calls Claude, writes replies
 - `bridge/setup.js`: installs the addon and its reply slots
-- `bridge/waypoint-mcp.js`: the set_waypoint tool (a tiny MCP server Claude Code starts)
+- `bridge/waypoint-mcp.js`: the waypoint tools (a tiny MCP server Claude Code starts)

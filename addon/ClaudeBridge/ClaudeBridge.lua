@@ -231,6 +231,10 @@ local CTX_READERS = {
       if not p then return nil end -- dungeons hide the position
       return string.format("%.1f, %.1f", p.x * 100, p.y * 100)
     end },
+  { "way", function() -- the arrow's route, from Waypoint.lua; nothing when that file isn't loaded.
+      -- Sits right after pos: it is small and Claude needs it to act, and the fields at the end are the ones the budget cuts.
+      return ClaudeBridge_WaypointContext and ClaudeBridge_WaypointContext()
+    end },
   { "money", function()
       local c = GetMoney()
       return string.format("%dg %ds %dc", math.floor(c / 10000), math.floor(c / 100) % 100, c % 100)
@@ -752,9 +756,9 @@ function ClaudeBridge_OnReply(id, text, extra)
   showUI(false)
   for line in (text .. "\n"):gmatch("(.-)\n") do addLine(line) end
   addLine(" ")
-  if extra and extra.waypoint then
-    if ClaudeBridge_SetWaypoint then
-      local ok, err = pcall(ClaudeBridge_SetWaypoint, extra.waypoint)
+  if extra and extra.waypoints then
+    if ClaudeBridge_SetWaypoints then
+      local ok, err = pcall(ClaudeBridge_SetWaypoints, extra.waypoints)
       if not ok then addLine("Couldn't set the waypoint: " .. tostring(err), 1, 0.3, 0.3) end
     else
       addLine(WAYPOINTS_MISSING, 1, 0.3, 0.3)

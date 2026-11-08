@@ -230,6 +230,7 @@ const CTX_LABELS = {
   prof: 'Professions',
   gear: 'Equipped',
   quests: 'Quest log',
+  way: "Waypoints (the arrow's route)",
 };
 
 function parsePayload(payload) {
@@ -300,15 +301,15 @@ function luaLongString(text) {
   return `[${eq}[\n${text}]${eq}]`;
 }
 
-// extra.waypoint = { zone, x, y, label } or extra.clear_waypoint = true rides along
-// as OnReply's third argument, so a reply left over from before a /reload
+// extra.waypoints = [{ zone, x, y, label }, ...] or extra.clear_waypoint = true rides
+// along as OnReply's third argument, so a reply left over from before a /reload
 // (ignored by OnReply) changes nothing.
 function slotLua(id, text, extra) {
   let tail = '';
-  if (extra && extra.waypoint) {
-    const w = extra.waypoint;
+  if (extra && extra.waypoints) {
     const s = (t) => luaLongString(cleanForWow(t));
-    tail = `, { waypoint = { zone = ${s(w.zone)}, x = ${Number(w.x)}, y = ${Number(w.y)}, label = ${s(w.label)} } }`;
+    const stops = extra.waypoints.map((w) => `{ zone = ${s(w.zone)}, x = ${Number(w.x)}, y = ${Number(w.y)}, label = ${s(w.label)} }`);
+    tail = `, { waypoints = { ${stops.join(', ')} } }`;
   } else if (extra && extra.clear_waypoint) {
     tail = ', { clear_waypoint = true }';
   }
