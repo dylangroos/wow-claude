@@ -299,8 +299,16 @@ function luaLongString(text) {
   return `[${eq}[\n${text}]${eq}]`;
 }
 
-function slotLua(id, text) {
-  return `ClaudeBridge_OnReply("${id}", ${luaLongString(cleanForWow(text))})\n`;
+// extra.waypoint = { zone, x, y, label } rides along as OnReply's third argument,
+// so a reply left over from before a /reload (ignored by OnReply) sets nothing.
+function slotLua(id, text, extra) {
+  let tail = '';
+  if (extra && extra.waypoint) {
+    const w = extra.waypoint;
+    const s = (t) => luaLongString(cleanForWow(t));
+    tail = `, { waypoint = { zone = ${s(w.zone)}, x = ${Number(w.x)}, y = ${Number(w.y)}, label = ${s(w.label)} } }`;
+  }
+  return `ClaudeBridge_OnReply("${id}", ${luaLongString(cleanForWow(text))}${tail})\n`;
 }
 
 const EMPTY_SLOT_LUA = '-- empty reply slot\n';

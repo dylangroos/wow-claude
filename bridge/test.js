@@ -13,6 +13,7 @@ const { execFileSync } = require('child_process');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cb-test-'));
 process.env.CB_CONFIG = path.join(tmp, 'config.json');
 process.env.CB_STATE = path.join(tmp, 'state.json');
+process.env.CB_AGENT_HOME = path.join(tmp, 'agent-home');
 
 const P = require('./protocol');
 const { setup } = require('./setup');
@@ -156,12 +157,19 @@ console.log(`Codec checks passed (TGA, PNG, JPEG${real ? ', real screenshot igno
   // Sent seconds before the bridge started: must still be answered.
   writeTga(renderScreen('0e0e0e|!selftest'), path.join(shots, 'WoWScrnShot_early.tga'));
 
-  // Fake Claude: echoes the prompt back in the same JSON shape as `claude -p --output-format json`.
+  // Fake Claude: echoes the prompt back in the same JSON shape as `claude -p --output-format json`,
+  // and plays the set_waypoint tool by appending to the file named in the bridge's MCP config.
   const fake = path.join(tmp, 'fake-claude.js');
   fs.writeFileSync(fake, `
+    const fs = require('fs');
     let s = ''; process.stdin.on('data', d => s += d);
     process.stdin.on('end', () => {
       const resumed = process.argv.includes('--resume');
+      const at = process.argv.indexOf('--mcp-config');
+      const file = at > 0 ? JSON.parse(fs.readFileSync(process.argv[at + 1], 'utf8')).mcpServers.wow.env.CB_WAYPOINT_FILE : null;
+      const wp = (zone, x, y, label) => fs.appendFileSync(file, JSON.stringify({ zone, x, y, label }) + '\\n');
+      if (s.includes('where is Hogger')) wp('Elwynn Forest', 25.6, 78.4, 'Hogger');
+      if (s.includes('two spots')) { wp('Elwynn Forest', 10, 10, 'First'); wp('Westfall', 56.5, 52.6, 'Sentinel Hill'); }
       process.stdout.write(JSON.stringify({ result: 'Echo: ' + s + (resumed ? ' (resumed)' : '') + ' ]]', session_id: 'sess-1', is_error: false }));
     });`);
 
@@ -208,6 +216,27 @@ console.log(`Codec checks passed (TGA, PNG, JPEG${real ? ', real screenshot igno
   await waitFor(() => slot(3).includes('c0ffee'));
   assert.ok(slot(3).includes('Character: Testmage, level 11 Human Mage\nEquipped: Ranged: Greater Magic Wand (17)\n\n[Question]\nupgrade?'), slot(3));
   bridge.cursor = 3; // reuse slot 3 below
+
+  // Scenario: Asking where something is sets a waypoint
+  bridge.cursor = 3;
+  writeTga(renderScreen('a0a0a0|where is Hogger?'), path.join(shots, 'WoWScrnShot_wp1.tga'));
+  await waitFor(() => slot(3).includes('a0a0a0'));
+  assert.match(slot(3), /^ClaudeBridge_OnReply\("a0a0a0", \[(=+)\[\n[\s\S]*\]\1\], \{ waypoint = \{ zone = \[=+\[\nElwynn Forest\]=+\], x = 25\.6, y = 78\.4, label = \[=+\[\nHogger\]=+\] \} \}\)\n$/, slot(3));
+
+  // Scenario: Only the last waypoint of an answer is kept
+  bridge.cursor = 3;
+  writeTga(renderScreen('b0b0b0|two spots please'), path.join(shots, 'WoWScrnShot_wp2.tga'));
+  await waitFor(() => slot(3).includes('b0b0b0'));
+  assert.ok(slot(3).includes('Sentinel Hill') && !slot(3).includes('First'), slot(3));
+
+  // Scenario: An answer without a waypoint carries none (the last answer's file is not reused)
+  bridge.cursor = 3;
+  writeTga(renderScreen('c1c1c1|ok thanks'), path.join(shots, 'WoWScrnShot_wp3.tga'));
+  await waitFor(() => slot(3).includes('c1c1c1'));
+  assert.ok(!slot(3).includes('waypoint'), slot(3));
+  assert.ok(fs.existsSync(path.join(process.env.CB_AGENT_HOME, 'mcp.json')), 'MCP config written under CB_AGENT_HOME, not the real agent-home');
+
+  bridge.cursor = 3; // reuse slot 3 again
 
   // Self-test never calls Claude.
   writeTga(renderScreen('5e1f00|!selftest'), path.join(shots, 'WoWScrnShot_3.tga'));

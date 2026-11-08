@@ -11,11 +11,15 @@ const os = require('os');
 const path = require('path');
 const { spawn, execFileSync } = require('child_process');
 const P = require('./protocol');
+const { checkWaypoint } = require('./waypoint-mcp');
 
 const ROOT = path.resolve(__dirname, '..');
 const CONFIG_PATH = process.env.CB_CONFIG || path.join(ROOT, 'config.json');
 const STATE_PATH = process.env.CB_STATE || path.join(ROOT, 'state.json');
-const AGENT_HOME = path.join(ROOT, 'agent-home');
+const AGENT_HOME = process.env.CB_AGENT_HOME || path.join(ROOT, 'agent-home');
+const WAYPOINT_FILE = path.join(AGENT_HOME, 'waypoint.jsonl');
+const MCP_CONFIG = path.join(AGENT_HOME, 'mcp.json');
+const WAYPOINT_TOOL = 'mcp__wow__set_waypoint';
 
 const POLL_MS = 250;
 const CLAUDE_TIMEOUT_MS = 200_000;
@@ -33,6 +37,11 @@ const SYSTEM_PROMPT = [
   '- Messages may start with a [Game state] block the addon adds automatically: the player\'s own',
   '  character (class, level, zone, talents, gear, quests...). Use it to tailor answers without',
   '  repeating it back. Later messages only include fields that changed, so earlier values still hold.',
+  '- When the player asks where something is (an NPC, a quest objective, a flight master...), find its',
+  '  zone map coordinates on a source page such as Wowhead and call set_waypoint with the zone name as the',
+  '  game shows it, x and y (0-100) and a short label. An arrow in game then points the player there.',
+  '  Prefer the spot nearest the player\'s "Map position". Mention the coordinates in your answer too.',
+  '  Never guess coordinates: if you can\'t find them, say so and don\'t call the tool.',
 ].join('\n');
 
 function log(...args) {
@@ -74,6 +83,19 @@ function readImage(file) {
   return P.readPng(jpegToPng(file));
 }
 
+// The last good set_waypoint call of this answer, or null.
+function readWaypoint() {
+  let lines;
+  try { lines = fs.readFileSync(WAYPOINT_FILE, 'utf8').split('\n').filter(Boolean); } catch { return null; }
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const w = JSON.parse(lines[i]);
+      if (!checkWaypoint(w)) return w;
+    } catch { /* a torn line: try the one before */ }
+  }
+  return null;
+}
+
 class Bridge {
   constructor(cfg) {
     this.cfg = cfg;
@@ -103,14 +125,14 @@ class Bridge {
     log(`Reply slots reset (${reason}).`);
   }
 
-  writeReply(id, text) {
+  writeReply(id, text, extra) {
     if (this.cursor > this.cfg.slots) {
       log('Out of reply slots. /reload in game to reset them.');
       return;
     }
     const i = this.cursor++;
     // Reply first, signal second: the game only loads the slot once the signal plays.
-    fs.writeFileSync(path.join(this.addonsDir, P.slotName(i), 'r.lua'), P.slotLua(id, text));
+    fs.writeFileSync(path.join(this.addonsDir, P.slotName(i), 'r.lua'), P.slotLua(id, text, extra));
     fs.writeFileSync(path.join(this.addonsDir, 'ClaudeBridge', 'sig', P.sigName(i)), P.silentWav());
     this.saveCursor();
     log(`Reply ${id} -> slot ${i}.`);
@@ -118,18 +140,27 @@ class Bridge {
 
   askClaude(prompt) {
     const [cmd, ...baseArgs] = this.cfg.claudeCommand || ['claude'];
+    fs.mkdirSync(AGENT_HOME, { recursive: true });
+    fs.rmSync(WAYPOINT_FILE, { force: true }); // only this answer's waypoint counts
+    fs.writeFileSync(MCP_CONFIG, JSON.stringify({ mcpServers: { wow: {
+      type: 'stdio',
+      command: process.execPath,
+      args: [path.join(__dirname, 'waypoint-mcp.js')],
+      env: { CB_WAYPOINT_FILE: WAYPOINT_FILE },
+    } } }));
     const args = [
       ...baseArgs,
       '-p',
       '--output-format', 'json',
-      '--tools', 'WebSearch,WebFetch',          // answer-only: no file edits, no shell
-      '--allowedTools', 'WebSearch,WebFetch',   // pre-approved: nobody is there to click "allow"
+      '--tools', 'WebSearch,WebFetch',          // answer-only: no file edits, no shell (MCP tools are separate)
+      '--allowedTools', `WebSearch,WebFetch,${WAYPOINT_TOOL}`, // pre-approved: nobody is there to click "allow"
+      '--mcp-config', MCP_CONFIG,
+      '--strict-mcp-config',                    // only our server, not the PC's other MCP servers
       '--append-system-prompt', SYSTEM_PROMPT,
     ];
     if (this.state.sessionId) args.push('--resume', this.state.sessionId);
 
     return new Promise((resolve) => {
-      fs.mkdirSync(AGENT_HOME, { recursive: true });
       const child = spawn(cmd, args, { cwd: AGENT_HOME, windowsHide: true });
       let out = '';
       let err = '';
@@ -157,7 +188,7 @@ class Bridge {
         } else if (j.is_error) {
           text = `error: ${text}`;
         }
-        resolve({ ok: !j.is_error, text });
+        resolve({ ok: !j.is_error, text, waypoint: j.is_error ? null : readWaypoint() });
       });
       child.stdin.end(prompt);
     });
@@ -182,7 +213,8 @@ class Bridge {
       const started = Date.now();
       const res = await this.askClaude(P.buildPrompt(text, ctx));
       log(`Claude ${res.ok ? 'answered' : 'failed'} in ${((Date.now() - started) / 1000).toFixed(1)}s.`);
-      this.writeReply(id, res.text);
+      if (res.waypoint) log(`Waypoint: ${res.waypoint.label}, ${res.waypoint.zone} ${res.waypoint.x}, ${res.waypoint.y}`);
+      this.writeReply(id, res.text, res.waypoint ? { waypoint: res.waypoint } : undefined);
     }
     this.busy = false;
   }
