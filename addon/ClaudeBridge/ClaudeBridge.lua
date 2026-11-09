@@ -695,9 +695,13 @@ local function sendNow(text)
   end)
 end
 
--- Sends the oldest queued message once nothing is pending.
+-- Sends the oldest queued message once nothing is pending. Its "> text" line
+-- goes in now, so a queued question sits right above its own answer.
 local function sendNextQueued()
-  if not pending and #queue > 0 then sendNow(table.remove(queue, 1)) end
+  if pending or #queue == 0 then return end
+  local text = table.remove(queue, 1)
+  if text:sub(1, 1) ~= "!" then addLine("> " .. text, 0.55, 0.8, 1) end
+  sendNow(text)
 end
 
 function ClaudeBridge_Send(text)
@@ -713,12 +717,12 @@ function ClaudeBridge_Send(text)
   end
   -- Everything joins the queue, so a queue paused by a failed send resumes oldest first.
   local waits = pending ~= nil or #queue > 0
-  if text:sub(1, 1) ~= "!" then
-    addLine("> " .. text .. (waits and "  (queued)" or ""), 0.55, 0.8, 1)
-  end
   queue[#queue + 1] = text
   sendNextQueued()
-  if waits then busyStatus() end
+  if waits then
+    if text:sub(1, 1) ~= "!" then addLine("> " .. text .. "  (queued)", 0.5, 0.5, 0.5) end
+    busyStatus()
+  end
 end
 
 ----------------------------------------------------------------------------

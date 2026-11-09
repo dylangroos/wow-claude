@@ -112,6 +112,8 @@ answer(q1, 'Hogger is at 25, 78.');
 assert.strictEqual(shots(), 2, 'the answer sends the next message');
 const q2 = sent();
 assert.strictEqual(q2.text, 'and the next quest?');
+// Scenario: A queued message shows again above its answer when it goes out
+assert.strictEqual(lastLine(), '> and the next quest?', 'echoed again right after the previous answer');
 assert.strictEqual(status(), 'sending... (+1 queued)');
 answer(q2);
 assert.strictEqual(sent().text, '!new');
@@ -152,9 +154,11 @@ send('r');
 assert.strictEqual(shots(), 7);
 const q = sent();
 assert.strictEqual(q.text, 'q', 'the older queued message goes first');
+assert.strictEqual(evalStr('LINES[#LINES - 1]'), '> q');
 assert.strictEqual(lastLine(), '> r  (queued)');
 answer(q);
 assert.strictEqual(sent().text, 'r');
+assert.strictEqual(lastLine(), '> r');
 answer(sent());
 assert.strictEqual(status(), '');
 
