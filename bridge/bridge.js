@@ -23,6 +23,7 @@ const WAYPOINT_TOOLS = 'mcp__wow__set_waypoint,mcp__wow__set_waypoints,mcp__wow_
 
 const POLL_MS = 250;
 const CLAUDE_TIMEOUT_MS = 200_000;
+const COMPACT_TIMEOUT_MS = 600_000; // compacting a long conversation took over 200s in practice
 const STARTUP_GRACE_MS = 240_000; // matches the addon's reply TIMEOUT
 const IMAGE_EXT = /\.(tga|png|jpe?g)$/i;
 
@@ -107,6 +108,7 @@ function readWaypointAction() {
 class Bridge {
   constructor(cfg) {
     this.cfg = cfg;
+    this.compactTimeoutMs = COMPACT_TIMEOUT_MS;
     this.addonsDir = path.join(cfg.wowDir, 'Interface', 'AddOns');
     this.shotsDir = path.join(cfg.wowDir, 'Screenshots');
     this.svFiles = (cfg.savedVarDirs || []).map((d) => path.join(d, 'ClaudeBridge.lua'));
@@ -146,7 +148,7 @@ class Bridge {
     log(`Reply ${id} -> slot ${i}.`);
   }
 
-  askClaude(prompt) {
+  askClaude(prompt, timeoutMs = CLAUDE_TIMEOUT_MS) {
     const [cmd, ...baseArgs] = this.cfg.claudeCommand || ['claude'];
     fs.mkdirSync(AGENT_HOME, { recursive: true });
     fs.rmSync(WAYPOINT_FILE, { force: true }); // only this answer's waypoint counts
@@ -172,7 +174,8 @@ class Bridge {
       const child = spawn(cmd, args, { cwd: AGENT_HOME, windowsHide: true });
       let out = '';
       let err = '';
-      const kill = setTimeout(() => child.kill(), CLAUDE_TIMEOUT_MS);
+      let killed = false;
+      const kill = setTimeout(() => { killed = true; child.kill(); }, timeoutMs);
       child.stdout.on('data', (d) => { out += d; });
       child.stderr.on('data', (d) => { err += d; });
       child.on('error', (e) => {
@@ -183,7 +186,7 @@ class Bridge {
         clearTimeout(kill);
         let j;
         try { j = JSON.parse(out); } catch {
-          resolve({ ok: false, text: `error: Claude gave no answer. ${err.trim().slice(0, 200)}` });
+          resolve({ ok: false, killed, text: `error: Claude gave no answer. ${err.trim().slice(0, 200)}` });
           return;
         }
         if (j.session_id && !j.is_error) {
@@ -218,7 +221,7 @@ class Bridge {
         this.writeReply(id, 'Started a new conversation.', { context: this.state.context });
         continue;
       }
-      if (text === '!compact') {
+      if (text === '!compact' || text.trim() === '/compact') {
         await this.compact(id);
         continue;
       }
@@ -251,8 +254,12 @@ class Bridge {
     }
     log(`Prompt ${id}: compacting the conversation${this.state.context ? ` (${this.state.context})` : ''}.`);
     const started = Date.now();
-    const res = await this.askClaude('/compact');
+    const res = await this.askClaude('/compact', this.compactTimeoutMs);
     log(`Compact ${res.ok ? 'finished' : 'failed'} in ${((Date.now() - started) / 1000).toFixed(1)}s.`);
+    if (res.killed) {
+      this.writeReply(id, 'error: Compacting took too long, so the bridge stopped it. Your conversation is unchanged.');
+      return;
+    }
     if (!res.ok) { this.writeReply(id, res.text); return; }
     if (res.raw.trim()) { this.writeReply(id, res.raw.trim()); return; } // e.g. "Not enough messages to compact."
     const was = this.state.context;

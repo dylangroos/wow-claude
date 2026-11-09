@@ -180,6 +180,7 @@ console.log(`Codec checks passed (TGA, PNG, JPEG${real ? ', real screenshot igno
       if (s.includes('route to the cave')) route(['Westfall', 45.2, 33.1, 'Murloc camp'], ['Elwynn Forest', 40, 20.1, 'Cave'], ['Elwynn Forest', 25.6, 78.4, 'Hogger']);
       if (s.includes('two routes')) { route(['Elwynn Forest', 1, 1, 'Old A'], ['Elwynn Forest', 2, 2, 'Old B']); route(['Westfall', 56.5, 52.6, 'Sentinel Hill'], ['Westfall', 56.2, 47.6, 'Gryan Stoutmantle']); }
       if (s.includes('route then done')) { route(['Elwynn Forest', 1, 1, 'A'], ['Elwynn Forest', 2, 2, 'B']); clear(); }
+      if (s.trim() === '/compact' && process.env.FAKE_SLOW) { setTimeout(() => {}, 5000); return; }
       if (s.trim() === '/compact') { process.stdout.write(JSON.stringify({ result: '', session_id: 'sess-1', is_error: false, usage: { iterations: [] } })); return; }
       // Real answers report each API call's tokens; the last one is the conversation's size.
       const usage = s.includes('big chat') ? { iterations: [
@@ -298,6 +299,21 @@ console.log(`Codec checks passed (TGA, PNG, JPEG${real ? ', real screenshot igno
   assert.ok(slot(3).includes('Compacted. It was 412k of 1M tokens (41%).'), slot(3));
   assert.ok(slot(3).includes('context = [') && slot(3).includes('just compacted'), slot(3));
   assert.strictEqual(JSON.parse(fs.readFileSync(process.env.CB_STATE, 'utf8')).sessionId, 'sess-1', 'compacting keeps the conversation');
+
+  // Scenario: Typing /compact as a message compacts too (an older addon sends it as plain text)
+  bridge.cursor = 3;
+  writeTga(renderScreen('cacaca|/compact'), path.join(shots, 'WoWScrnShot_cx4.tga'));
+  await waitFor(() => slot(3).includes('cacaca'));
+  assert.ok(slot(3).includes('Compacted.'), slot(3));
+
+  // Scenario: A compact that runs too long is stopped with a clear message
+  bridge.cursor = 3;
+  bridge.compactTimeoutMs = 400;
+  process.env.FAKE_SLOW = '1';
+  writeTga(renderScreen('cbcbcb|!compact'), path.join(shots, 'WoWScrnShot_cx5.tga'));
+  await waitFor(() => slot(3).includes('cbcbcb'));
+  delete process.env.FAKE_SLOW;
+  assert.ok(slot(3).includes('error: Compacting took too long, so the bridge stopped it. Your conversation is unchanged.'), slot(3));
 
   bridge.cursor = 3; // reuse slot 3 again
 

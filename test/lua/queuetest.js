@@ -175,7 +175,7 @@ assert.ok(said('Conversation: 412k of 1M tokens (41%)'), lastLine());
 cmd('compact');
 const c1 = sent();
 assert.strictEqual(c1.text, '!compact');
-assert.strictEqual(lastLine(), 'Compacting the conversation... (can take a minute)');
+assert.strictEqual(lastLine(), 'Compacting the conversation... (can take a few minutes)');
 assert.strictEqual(status(), 'compacting...');
 run('FIRE("SCREENSHOT_SUCCEEDED")', 'shot');
 assert.strictEqual(status(), 'compacting...');
@@ -195,7 +195,20 @@ assert.strictEqual(lastLine(), 'Compact queued: it runs after the current answer
 assert.strictEqual(status(), 'sending... (+1 queued)');
 answer(m);
 assert.strictEqual(sent().text, '!compact');
-assert.strictEqual(lastLine(), 'Compacting the conversation... (can take a minute)');
+assert.strictEqual(lastLine(), 'Compacting the conversation... (can take a few minutes)');
 answer(sent(), 'Compacted.');
+
+// Scenario: Typing /compact in the window compacts
+send('/compact');
+const c3 = sent();
+assert.strictEqual(c3.text, '!compact');
+assert.strictEqual(lastLine(), 'Compacting the conversation... (can take a few minutes)');
+
+// Scenario: The addon waits longer for a compact than for an answer
+run('PlaySoundFile = function() return false end; GetTime = function() return 100 + 300 end; ClaudeBridge_Poll()', 'poll');
+assert.ok(!/^No answer/.test(lastLine()), 'still waiting after 300s: ' + lastLine());
+run('GetTime = function() return 100 + 1000 end; ClaudeBridge_Poll()', 'poll2');
+assert.ok(/^No answer after 900s/.test(lastLine()), lastLine());
+run('GetTime = function() return 100 end', 'time');
 
 console.log('Lua queue tests passed.');
