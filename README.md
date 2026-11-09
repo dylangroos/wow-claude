@@ -57,12 +57,12 @@ Leave it running while you play. In game:
 
 | Command | What it does |
 |---|---|
-| `/claude` | Open or close the window. Type a question and press Enter. |
+| `/claude` | Open or close the window. Type a question and press Enter. Messages typed while Claude is answering queue up (up to 5) and go out one at a time. |
 | `/claude <question>` | Ask directly from chat. |
 | `/claude new` | Start a fresh conversation. |
 | `/claude context` | Show the character info Claude gets. `context off` / `context on` toggles it. |
 | `/claude way` | Show the waypoint or route Claude set, stop by stop. `way clear` removes it (or right-click the arrow). |
-| `/claude cancel` | Stop waiting for an answer. |
+| `/claude cancel` | Stop waiting for an answer and drop any queued messages. |
 | `/claude selftest` | Round-trip check without asking Claude. |
 
 **Hotkey:** set one under Game Menu > Options > Keybindings > AddOns > Claude Bridge
