@@ -196,7 +196,11 @@ class Bridge {
         } else if (j.is_error) {
           text = `error: ${text}`;
         }
-        resolve({ ok: !j.is_error, text, extra: j.is_error ? null : readWaypointAction() });
+        resolve({
+          ok: !j.is_error, text, raw: j.result || '',
+          extra: j.is_error ? null : readWaypointAction(),
+          context: j.is_error ? null : P.contextSize(j),
+        });
       });
       child.stdin.end(prompt);
     });
@@ -209,8 +213,13 @@ class Bridge {
       const { id, text, ctx } = this.queue.shift();
       if (text === '!new') {
         delete this.state.sessionId;
+        this.state.context = 'nothing yet (new conversation)';
         this.saveState();
-        this.writeReply(id, 'Started a new conversation.');
+        this.writeReply(id, 'Started a new conversation.', { context: this.state.context });
+        continue;
+      }
+      if (text === '!compact') {
+        await this.compact(id);
         continue;
       }
       if (text === '!selftest') {
@@ -224,9 +233,34 @@ class Bridge {
       const ws = res.extra && res.extra.waypoints;
       if (ws) log(`Waypoints: ${ws.length} stop${ws.length === 1 ? '' : 's'}, first ${ws[0].label}, ${ws[0].zone} ${ws[0].x}, ${ws[0].y}`);
       if (res.extra && res.extra.clear_waypoint) log('Waypoint cleared.');
-      this.writeReply(id, res.text, res.extra || undefined);
+      if (res.context) {
+        this.state.context = res.context;
+        this.saveState();
+        log(`Conversation: ${res.context}.`);
+      }
+      this.writeReply(id, res.text, { ...res.extra, context: res.context || undefined });
     }
     this.busy = false;
+  }
+
+  // "/claude compact": Claude Code's own /compact, run on the game's conversation.
+  async compact(id) {
+    if (!this.state.sessionId) {
+      this.writeReply(id, "There's no conversation to compact yet.");
+      return;
+    }
+    log(`Prompt ${id}: compacting the conversation${this.state.context ? ` (${this.state.context})` : ''}.`);
+    const started = Date.now();
+    const res = await this.askClaude('/compact');
+    log(`Compact ${res.ok ? 'finished' : 'failed'} in ${((Date.now() - started) / 1000).toFixed(1)}s.`);
+    if (!res.ok) { this.writeReply(id, res.text); return; }
+    if (res.raw.trim()) { this.writeReply(id, res.raw.trim()); return; } // e.g. "Not enough messages to compact."
+    const was = this.state.context;
+    this.state.context = 'just compacted; the new size shows after your next question';
+    this.saveState();
+    this.writeReply(id, was && /^\d/.test(was)
+      ? `Compacted. It was ${was}. The new size shows after your next question.`
+      : 'Compacted. The new size shows after your next question.', { context: this.state.context });
   }
 
   handleScreenshot(file) {

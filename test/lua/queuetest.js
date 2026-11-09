@@ -162,4 +162,40 @@ assert.strictEqual(lastLine(), '> r');
 answer(sent());
 assert.strictEqual(status(), '');
 
+// Scenario: Context command shows conversation size
+const cmd = (m) => run(`SlashCmdList.CLAUDEBRIDGE(${JSON.stringify(m)})`, 'cmd');
+cmd('context');
+assert.ok(said("Conversation: size unknown until Claude's next answer."), lastLine());
+send('a big chat');
+run(`ClaudeBridge_OnReply(${JSON.stringify(sent().id)}, "ok", { context = "412k of 1M tokens (41%)" })`, 'reply');
+cmd('context');
+assert.ok(said('Conversation: 412k of 1M tokens (41%)'), lastLine());
+
+// Scenario: Compact shows progress and completion
+cmd('compact');
+const c1 = sent();
+assert.strictEqual(c1.text, '!compact');
+assert.strictEqual(lastLine(), 'Compacting the conversation... (can take a minute)');
+assert.strictEqual(status(), 'compacting...');
+run('FIRE("SCREENSHOT_SUCCEEDED")', 'shot');
+assert.strictEqual(status(), 'compacting...');
+run(`ClaudeBridge_OnReply(${JSON.stringify(c1.id)}, "Compacted. It was 412k of 1M tokens (41%).", { context = "just compacted" })`, 'reply');
+assert.strictEqual(evalStr('LINES[#LINES - 1]'), 'Compacted. It was 412k of 1M tokens (41%).');
+assert.strictEqual(status(), '');
+cmd('context');
+assert.ok(said('Conversation: just compacted'));
+
+// Scenario: Compact waits behind a pending question
+send('one more');
+const before = shots();
+const m = sent();
+cmd('compact');
+assert.strictEqual(shots(), before, 'compact waits for the answer');
+assert.strictEqual(lastLine(), 'Compact queued: it runs after the current answer.');
+assert.strictEqual(status(), 'sending... (+1 queued)');
+answer(m);
+assert.strictEqual(sent().text, '!compact');
+assert.strictEqual(lastLine(), 'Compacting the conversation... (can take a minute)');
+answer(sent(), 'Compacted.');
+
 console.log('Lua queue tests passed.');

@@ -301,19 +301,38 @@ function luaLongString(text) {
   return `[${eq}[\n${text}]${eq}]`;
 }
 
-// extra.waypoints = [{ zone, x, y, label }, ...] or extra.clear_waypoint = true rides
-// along as OnReply's third argument, so a reply left over from before a /reload
-// (ignored by OnReply) changes nothing.
+// extra.waypoints = [{ zone, x, y, label }, ...] or extra.clear_waypoint = true, and
+// extra.context (the conversation's size, as text), ride along as OnReply's third
+// argument, so a reply left over from before a /reload (ignored by OnReply) changes nothing.
 function slotLua(id, text, extra) {
-  let tail = '';
+  const s = (t) => luaLongString(cleanForWow(t));
+  const fields = [];
   if (extra && extra.waypoints) {
-    const s = (t) => luaLongString(cleanForWow(t));
     const stops = extra.waypoints.map((w) => `{ zone = ${s(w.zone)}, x = ${Number(w.x)}, y = ${Number(w.y)}, label = ${s(w.label)} }`);
-    tail = `, { waypoints = { ${stops.join(', ')} } }`;
+    fields.push(`waypoints = { ${stops.join(', ')} }`);
   } else if (extra && extra.clear_waypoint) {
-    tail = ', { clear_waypoint = true }';
+    fields.push('clear_waypoint = true');
   }
+  if (extra && extra.context) fields.push(`context = ${s(extra.context)}`);
+  const tail = fields.length ? `, { ${fields.join(', ')} }` : '';
   return `ClaudeBridge_OnReply("${id}", ${luaLongString(cleanForWow(text))}${tail})\n`;
+}
+
+const fmtTokens = (n) => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+
+// How full the conversation is, from a `claude -p --output-format json` result:
+// the last API call's input plus output is everything Claude now holds.
+// "412k of 1M tokens (41%)", or null when the result doesn't say.
+function contextSize(j) {
+  const its = j && j.usage && j.usage.iterations;
+  if (!Array.isArray(its) || !its.length) return null;
+  const it = its[its.length - 1];
+  const used = (it.input_tokens || 0) + (it.cache_read_input_tokens || 0)
+    + (it.cache_creation_input_tokens || 0) + (it.output_tokens || 0);
+  if (!used) return null;
+  const max = Math.max(0, ...Object.values(j.modelUsage || {}).map((m) => m.contextWindow || 0));
+  if (!max) return `${fmtTokens(used)} tokens`;
+  return `${fmtTokens(used)} of ${fmtTokens(max)} tokens (${Math.round((used / max) * 100)}%)`;
 }
 
 const EMPTY_SLOT_LUA = '-- empty reply slot\n';
@@ -387,6 +406,7 @@ module.exports = {
   cleanForWow,
   luaLongString,
   slotLua,
+  contextSize,
   EMPTY_SLOT_LUA,
   slotName,
   sigName,
