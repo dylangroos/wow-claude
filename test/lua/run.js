@@ -10,7 +10,7 @@ const { execFileSync } = require('child_process');
 
 const tools = path.resolve(process.argv[2] || path.join(__dirname, '.tools'));
 execFileSync(process.execPath, [path.join(__dirname, 'make-linktest.js')], { stdio: 'inherit' });
-for (const t of ['luaencode.js', 'ctxtest.js', 'ctxtest-modern.js', 'linktest.js', 'waypointtest.js']) {
+for (const t of ['luaencode.js', 'ctxtest.js', 'ctxtest-modern.js', 'linktest.js', 'waypointtest.js', 'queuetest.js']) {
   console.log(`--- ${t}`);
   execFileSync(process.execPath, [path.join(__dirname, t), tools], { stdio: 'inherit' });
 }

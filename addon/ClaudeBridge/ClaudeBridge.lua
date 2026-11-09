@@ -29,6 +29,8 @@ local SHOT_WAIT = 4       -- seconds for WoW to confirm the screenshot
 local gaveUp              -- the last pending we dropped for lack of a screenshot
 local late                -- a pending that timed out: its answer still shows if it arrives
 local probing = false     -- a sound check is in flight
+local queue = {}          -- messages typed while waiting, sent in order after each answer
+local MAX_QUEUE = 5
 local ui                  -- built lazily
 
 ClaudeBridgeDB = ClaudeBridgeDB or {}
@@ -45,6 +47,13 @@ local WAYPOINTS_MISSING = "Waypoints aren't loaded yet. Restart the game (a /rel
 
 local function setStatus(text)
   if ui then ui.status:SetText(text or "") end
+end
+
+-- "sending..." until WoW confirms the screenshot, then "thinking...", plus what's queued.
+local function busyStatus()
+  local s = (pending and pending.shot) and "thinking..." or "sending..."
+  if #queue > 0 then s = s .. " (+" .. #queue .. " queued)" end
+  setStatus(s)
 end
 
 -- Answers arrive through a sound that WoW only plays in the background with this on.
@@ -640,18 +649,8 @@ local function stopPolling()
   if ui and ui.ticker then ui.ticker:Cancel(); ui.ticker = nil end
 end
 
-function ClaudeBridge_Send(text)
-  text = (text or ""):gsub("^%s+", ""):gsub("%s+$", "")
-  if text == "" then return end
-  if pending then
-    addLine("Still waiting on the last answer... (/claude cancel to stop waiting)", 1, 0.8, 0.3)
-    return
-  end
-  if #text > MAX_BYTES then
-    addLine("That's too long, keep it under about " .. MAX_BYTES .. " characters.", 1, 0.3, 0.3)
-    return
-  end
-
+-- Draws the strip and takes the screenshot that carries text to the bridge.
+local function sendNow(text)
   local id = string.format("%06x", math.random(0, 0xFFFFFF))
   local ctx, body = nil, plainText(text)
   if text == "!new" then
@@ -673,14 +672,13 @@ function ClaudeBridge_Send(text)
   SetCVar("screenshotFormat", "tga") -- lossless; the bridge also copes with jpeg/png
   Screenshot()                        -- captured at the end of this frame, strip included
 
-  if text:sub(1, 1) ~= "!" then addLine("> " .. text, 0.55, 0.8, 1) end
   if bgSoundOff() and not ClaudeBridgeDB.bgTipShown then
     ClaudeBridgeDB.bgTipShown = true
     addLine("Tip: answers only arrive while WoW is in front. To get them while you're tabbed out, type "
       .. BG_SOUND_CMD .. " (Sound in Background).", 0.6, 0.6, 0.6)
   end
   pending = { id = id, sentAt = GetTime(), ctx = ctx }
-  setStatus("sending...")
+  busyStatus()
   startPolling()
 
   -- If WoW never confirms the screenshot, the question didn't leave the game:
@@ -695,6 +693,32 @@ function ClaudeBridge_Send(text)
       ClaudeBridgeDB.lastFail = { at = time(), id = id, why = "no screenshot event" }
     end
   end)
+end
+
+-- Sends the oldest queued message once nothing is pending.
+local function sendNextQueued()
+  if not pending and #queue > 0 then sendNow(table.remove(queue, 1)) end
+end
+
+function ClaudeBridge_Send(text)
+  text = (text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+  if text == "" then return end
+  if #text > MAX_BYTES then
+    addLine("That's too long, keep it under about " .. MAX_BYTES .. " characters.", 1, 0.3, 0.3)
+    return
+  end
+  if #queue >= MAX_QUEUE then
+    addLine("Queue's full (" .. MAX_QUEUE .. " waiting). Wait for an answer, or /claude cancel to drop them.", 1, 0.8, 0.3)
+    return
+  end
+  -- Everything joins the queue, so a queue paused by a failed send resumes oldest first.
+  local waits = pending ~= nil or #queue > 0
+  if text:sub(1, 1) ~= "!" then
+    addLine("> " .. text .. (waits and "  (queued)" or ""), 0.55, 0.8, 1)
+  end
+  queue[#queue + 1] = text
+  sendNextQueued()
+  if waits then busyStatus() end
 end
 
 ----------------------------------------------------------------------------
@@ -772,6 +796,7 @@ function ClaudeBridge_OnReply(id, text, extra)
       addLine(WAYPOINTS_MISSING, 1, 0.3, 0.3)
     end
   end
+  sendNextQueued()
 end
 
 ----------------------------------------------------------------------------
@@ -802,12 +827,17 @@ SlashCmdList.CLAUDEBRIDGE = function(msg)
     end
   elseif msg == "cancel" then
     showUI(false)
+    local dropped = #queue
+    queue = {}
     if pending or late then
       pending, late = nil, nil
       setStatus("")
       addLine("Stopped waiting. A late answer to that question will be ignored.", 0.6, 0.6, 0.6)
-    else
+    elseif dropped == 0 then
       addLine("Nothing to cancel.", 0.6, 0.6, 0.6)
+    end
+    if dropped > 0 then
+      addLine("Dropped " .. dropped .. " queued message" .. (dropped == 1 and "" or "s") .. ".", 0.6, 0.6, 0.6)
     end
   elseif msg == "new" then
     showUI(false)
@@ -846,7 +876,7 @@ ev:SetScript("OnEvent", function(_, event)
     end
     if pending and not pending.shot then
       pending.shot = "ok"
-      setStatus("thinking...")
+      busyStatus()
     end
   elseif event == "SCREENSHOT_FAILED" then
     hideStrip()
