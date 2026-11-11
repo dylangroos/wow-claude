@@ -20,6 +20,7 @@ local LoadAddOnFn = (C_AddOns and C_AddOns.LoadAddOn) or LoadAddOn
 local BLOCK = 16          -- physical pixels per block (matches JPEG's 16px chroma grid)
 local MAX_BYTES = 1200    -- prompt size limit
 local TIMEOUT = 240       -- seconds to wait for a reply before giving up
+local COMPACT_TIMEOUT = 900 -- compacting a long conversation can take minutes (the bridge stops it at 10)
 local CAL = { 0, 21, 42, 63 }        -- gray calibration blocks: level L = (L,L,L)
 local MAGIC = { 51, 12, 60, 3 }      -- (3,0,3) (0,3,0) (3,3,0) (0,0,3)
 
@@ -52,6 +53,7 @@ end
 -- "sending..." until WoW confirms the screenshot, then "thinking...", plus what's queued.
 local function busyStatus()
   local s = (pending and pending.shot) and "thinking..." or "sending..."
+  if pending and pending.text == "!compact" then s = "compacting..." end
   if #queue > 0 then s = s .. " (+" .. #queue .. " queued)" end
   setStatus(s)
 end
@@ -677,7 +679,8 @@ local function sendNow(text)
     addLine("Tip: answers only arrive while WoW is in front. To get them while you're tabbed out, type "
       .. BG_SOUND_CMD .. " (Sound in Background).", 0.6, 0.6, 0.6)
   end
-  pending = { id = id, sentAt = GetTime(), ctx = ctx }
+  pending = { id = id, sentAt = GetTime(), ctx = ctx, text = text,
+    timeout = text == "!compact" and COMPACT_TIMEOUT or TIMEOUT }
   busyStatus()
   startPolling()
 
@@ -700,13 +703,18 @@ end
 local function sendNextQueued()
   if pending or #queue == 0 then return end
   local text = table.remove(queue, 1)
-  if text:sub(1, 1) ~= "!" then addLine("> " .. text, 0.55, 0.8, 1) end
+  if text == "!compact" then
+    addLine("Compacting the conversation... (can take a few minutes)", 0.6, 0.6, 0.6)
+  elseif text:sub(1, 1) ~= "!" then
+    addLine("> " .. text, 0.55, 0.8, 1)
+  end
   sendNow(text)
 end
 
 function ClaudeBridge_Send(text)
   text = (text or ""):gsub("^%s+", ""):gsub("%s+$", "")
   if text == "" then return end
+  if text:lower() == "/compact" then text = "!compact" end -- typed in the window, like /claude compact
   if #text > MAX_BYTES then
     addLine("That's too long, keep it under about " .. MAX_BYTES .. " characters.", 1, 0.3, 0.3)
     return
@@ -720,7 +728,11 @@ function ClaudeBridge_Send(text)
   queue[#queue + 1] = text
   sendNextQueued()
   if waits then
-    if text:sub(1, 1) ~= "!" then addLine("> " .. text .. "  (queued)", 0.5, 0.5, 0.5) end
+    if text == "!compact" then
+      addLine("Compact queued: it runs after the current answer.", 0.5, 0.5, 0.5)
+    elseif text:sub(1, 1) ~= "!" then
+      addLine("> " .. text .. "  (queued)", 0.5, 0.5, 0.5)
+    end
     busyStatus()
   end
 end
@@ -732,8 +744,8 @@ end
 function ClaudeBridge_Poll()
   if not pending and not late then stopPolling(); setStatus(""); return end
   if probing then return end
-  if pending and GetTime() - pending.sentAt > TIMEOUT then
-    local msg = "No answer after " .. TIMEOUT .. "s. I'll keep listening and show it here if it comes."
+  if pending and GetTime() - pending.sentAt > pending.timeout then
+    local msg = "No answer after " .. pending.timeout .. "s. I'll keep listening and show it here if it comes."
       .. " Is bridge.js running on your PC, and is game sound on?"
     if bgSoundOff() then
       msg = msg .. " Answers can't arrive while WoW is tabbed out unless Sound in Background is on: " .. BG_SOUND_CMD
@@ -781,6 +793,7 @@ function ClaudeBridge_OnReply(id, text, extra)
   if req.ctx and not text:find("^error:") then
     for _, kv in ipairs(req.ctx) do lastCtx[kv[1]] = kv[2] end
   end
+  if extra and extra.context then ClaudeBridgeDB.convSize = extra.context end
   showUI(false)
   for line in (text .. "\n"):gmatch("(.-)\n") do addLine(line) end
   addLine(" ")
@@ -822,6 +835,7 @@ SlashCmdList.CLAUDEBRIDGE = function(msg)
     addLine("Character info is on.", 0.6, 0.6, 0.6)
   elseif msg == "context" then
     showUI(false)
+    addLine("Conversation: " .. (ClaudeBridgeDB.convSize or "size unknown until Claude's next answer."), 0.6, 0.6, 0.6)
     if ClaudeBridgeDB.context == false then
       addLine("Character info is off. /claude context on to turn it on.", 0.6, 0.6, 0.6)
     else
@@ -846,6 +860,9 @@ SlashCmdList.CLAUDEBRIDGE = function(msg)
   elseif msg == "new" then
     showUI(false)
     ClaudeBridge_Send("!new")
+  elseif msg == "compact" then
+    showUI(false)
+    ClaudeBridge_Send("!compact")
   elseif msg == "way" or msg == "way clear" then
     if ClaudeBridge_WaypointCommand then
       ClaudeBridge_WaypointCommand(msg == "way" and "" or "clear")

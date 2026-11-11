@@ -180,7 +180,15 @@ console.log(`Codec checks passed (TGA, PNG, JPEG${real ? ', real screenshot igno
       if (s.includes('route to the cave')) route(['Westfall', 45.2, 33.1, 'Murloc camp'], ['Elwynn Forest', 40, 20.1, 'Cave'], ['Elwynn Forest', 25.6, 78.4, 'Hogger']);
       if (s.includes('two routes')) { route(['Elwynn Forest', 1, 1, 'Old A'], ['Elwynn Forest', 2, 2, 'Old B']); route(['Westfall', 56.5, 52.6, 'Sentinel Hill'], ['Westfall', 56.2, 47.6, 'Gryan Stoutmantle']); }
       if (s.includes('route then done')) { route(['Elwynn Forest', 1, 1, 'A'], ['Elwynn Forest', 2, 2, 'B']); clear(); }
-      process.stdout.write(JSON.stringify({ result: 'Echo: ' + s + (resumed ? ' (resumed)' : '') + ' ]]', session_id: 'sess-1', is_error: false }));
+      if (s.trim() === '/compact' && process.env.FAKE_SLOW) { setTimeout(() => {}, 5000); return; }
+      if (s.trim() === '/compact') { process.stdout.write(JSON.stringify({ result: '', session_id: 'sess-1', is_error: false, usage: { iterations: [] } })); return; }
+      // Real answers report each API call's tokens; the last one is the conversation's size.
+      const usage = s.includes('big chat') ? { iterations: [
+        { input_tokens: 5, cache_read_input_tokens: 1000, cache_creation_input_tokens: 0, output_tokens: 50 },
+        { input_tokens: 2, cache_read_input_tokens: 400000, cache_creation_input_tokens: 11998, output_tokens: 0 },
+      ] } : undefined;
+      const modelUsage = usage ? { 'claude-test': { contextWindow: 1000000 } } : undefined;
+      process.stdout.write(JSON.stringify({ result: 'Echo: ' + s + (resumed ? ' (resumed)' : '') + ' ]]', session_id: 'sess-1', is_error: false, usage, modelUsage }));
     });`);
 
   setup({ wow, slots: 3 });
@@ -278,6 +286,35 @@ console.log(`Codec checks passed (TGA, PNG, JPEG${real ? ', real screenshot igno
   assert.match(slot(3), /, \{ clear_waypoint = true \}\)\n$/, slot(3));
   assert.ok(!slot(3).includes('waypoints ='), slot(3));
 
+  // Scenario: Each answer reports the conversation's size
+  bridge.cursor = 3;
+  writeTga(renderScreen('c7c7c7|a big chat'), path.join(shots, 'WoWScrnShot_cx1.tga'));
+  await waitFor(() => slot(3).includes('c7c7c7'));
+  assert.match(slot(3), /, \{ context = \[=+\[\n412k of 1M tokens \(41%\)\]=+\] \}\)\n$/, slot(3));
+
+  // Scenario: Compact shows progress and completion (the bridge side)
+  bridge.cursor = 3;
+  writeTga(renderScreen('c8c8c8|!compact'), path.join(shots, 'WoWScrnShot_cx2.tga'));
+  await waitFor(() => slot(3).includes('c8c8c8'));
+  assert.ok(slot(3).includes('Compacted. It was 412k of 1M tokens (41%).'), slot(3));
+  assert.ok(slot(3).includes('context = [') && slot(3).includes('just compacted'), slot(3));
+  assert.strictEqual(JSON.parse(fs.readFileSync(process.env.CB_STATE, 'utf8')).sessionId, 'sess-1', 'compacting keeps the conversation');
+
+  // Scenario: Typing /compact as a message compacts too (an older addon sends it as plain text)
+  bridge.cursor = 3;
+  writeTga(renderScreen('cacaca|/compact'), path.join(shots, 'WoWScrnShot_cx4.tga'));
+  await waitFor(() => slot(3).includes('cacaca'));
+  assert.ok(slot(3).includes('Compacted.'), slot(3));
+
+  // Scenario: A compact that runs too long is stopped with a clear message
+  bridge.cursor = 3;
+  bridge.compactTimeoutMs = 400;
+  process.env.FAKE_SLOW = '1';
+  writeTga(renderScreen('cbcbcb|!compact'), path.join(shots, 'WoWScrnShot_cx5.tga'));
+  await waitFor(() => slot(3).includes('cbcbcb'));
+  delete process.env.FAKE_SLOW;
+  assert.ok(slot(3).includes('error: Compacting took too long, so the bridge stopped it. Your conversation is unchanged.'), slot(3));
+
   bridge.cursor = 3; // reuse slot 3 again
 
   // Self-test never calls Claude.
@@ -301,6 +338,12 @@ console.log(`Codec checks passed (TGA, PNG, JPEG${real ? ', real screenshot igno
   await waitFor(() => sig(1) > 0);
   assert.ok(slot(1).includes('Started a new conversation.'));
   assert.strictEqual(JSON.parse(fs.readFileSync(process.env.CB_STATE, 'utf8')).sessionId, undefined);
+  assert.ok(slot(1).includes('context = [') && slot(1).includes('new conversation'), slot(1));
+
+  // Scenario: Compact with no conversation says so
+  writeTga(renderScreen('c9c9c9|!compact'), path.join(shots, 'WoWScrnShot_cx3.tga'));
+  await waitFor(() => sig(2) > 0);
+  assert.ok(slot(2).includes("There's no conversation to compact yet."), slot(2));
 
   bridge2.stop();
   console.log('All bridge tests passed.');

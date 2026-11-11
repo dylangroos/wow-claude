@@ -60,7 +60,8 @@ Leave it running while you play. In game:
 | `/claude` | Open or close the window. Type a question and press Enter. Messages typed while Claude is answering queue up (up to 5) and go out one at a time. |
 | `/claude <question>` | Ask directly from chat. |
 | `/claude new` | Start a fresh conversation. |
-| `/claude context` | Show the character info Claude gets. `context off` / `context on` toggles it. |
+| `/claude compact` | Shrink a long conversation: Claude summarizes it and keeps going from the summary (takes a few minutes on a long one). Typing `/compact` in the window works too. |
+| `/claude context` | Show how full the conversation is (e.g. 412k of 1M tokens) and the character info Claude gets. `context off` / `context on` toggles the character info. |
 | `/claude way` | Show the waypoint or route Claude set, stop by stop. `way clear` removes it (or right-click the arrow). |
 | `/claude cancel` | Stop waiting for an answer and drop any queued messages. |
 | `/claude selftest` | Round-trip check without asking Claude. |
