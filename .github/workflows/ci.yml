@@ -1,0 +1,57 @@
+name: CI
+
+# Every push and PR: run all tests, build ClaudeBridge.exe and smoke-test it.
+# A pushed version tag (v1.2.3) also publishes the zip as a GitHub Release.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install Lua test tools
+        run: npm install --no-save --prefix test/lua/.tools fengari@0.1.5 luaparse@0.3.1
+      - name: Bridge tests
+        run: node bridge/test.js
+      - name: Lock tests
+        run: node bridge/lock.test.js
+      - name: Addon (Lua) tests
+        run: node test/lua/run.js
+      - name: End-to-end smoke test from the repo
+        run: node scripts/exe-smoke.js --repo
+
+  exe:
+    needs: test
+    runs-on: windows-latest
+    permissions:
+      contents: write # only used by the release step, which runs for tags only
+    env:
+      CB_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || format('dev-{0}', github.run_number) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Build ClaudeBridge.exe
+        run: node scripts/build-exe.js
+      - name: Smoke-test the exe
+        run: node scripts/exe-smoke.js dist/ClaudeBridge/ClaudeBridge.exe ${{ env.CB_VERSION }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ClaudeBridge-${{ env.CB_VERSION }}
+          path: dist/ClaudeBridge-${{ env.CB_VERSION }}.zip
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" "dist/ClaudeBridge-${{ github.ref_name }}.zip" --title "Claude Bridge ${{ github.ref_name }}" --generate-notes

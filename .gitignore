@@ -4,3 +4,4 @@ agent-home/
 node_modules/
 test/lua/.tools/
 test/lua/linktest.js
+dist/

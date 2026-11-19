@@ -28,7 +28,22 @@ No input injection, no memory reading, no gameplay automation. The addon uses
 normal addon APIs and only reads your own character's info. The PC side only
 reads screenshots and writes addon files.
 
-## Setup (once)
+## Download (no Node needed)
+
+Get `ClaudeBridge-vX.Y.Z.zip` from the [Releases page](https://github.com/dylangroos/wow-claude/releases)
+and unzip it into a folder of its own. You still need [Claude Code](https://claude.com/claude-code)
+installed and logged in (`claude auth login` in a terminal), because the bridge asks it every question.
+
+Double-click `ClaudeBridge.exe`. The first time, it finds WoW: Forever and installs the
+addon (if WoW is open, quit it fully and start it again). Leave the window open while
+you play. Only one bridge runs per WoW folder: a second one says so and doesn't start.
+`ClaudeBridge.exe setup` reinstalls the addon, `setup --wow "<path>"` points it at
+another WoW folder, `setup --uninstall` removes it.
+
+Windows may warn that the exe is from an unknown publisher (it isn't code-signed):
+choose More info, then Run anyway.
+
+## Setup from the repo (once)
 
 Requires Node.js 18+ and [Claude Code](https://claude.com/claude-code). No npm
 packages.
@@ -115,7 +130,22 @@ npm install --prefix test/lua/.tools fengari luaparse
 node test/lua/run.js
 ```
 
+`node bridgelock.test.js` checks the one-bridge-per-WoW-folder lock, and
+`node scriptsexe-smoke.js --repo` runs a full question with a waypoint end to end.
+
 Designs and plans for upcoming features live in `docs/specs/`.
+
+## Releases
+
+CI (`.github/workflows/ci.yml`) runs every test on Windows for each push and PR, then
+builds `ClaudeBridge.exe` (`node scriptsuild-exe.js`: the bridge bundled into a Node
+single executable, zipped with the addon) and smoke-tests the real exe. The zip is
+attached to the run as an artifact. Pushing a version tag publishes it as a release:
+
+```
+git tag v1.0.0
+git push origin v1.0.0
+```
 
 ## Files
 
@@ -124,3 +154,7 @@ Designs and plans for upcoming features live in `docs/specs/`.
 - `bridge/bridge.js`: watches Screenshots, calls Claude, writes replies
 - `bridge/setup.js`: installs the addon and its reply slots
 - `bridge/waypoint-mcp.js`: the waypoint tools (a tiny MCP server Claude Code starts)
+- `bridge/cli.js`: entry point of `ClaudeBridge.exe` (first-run install, then the bridge)
+- `bridge/lock.js`: refuses to start a second bridge for the same WoW folder
+- `bridge/paths.js`: where config and state live (repo root, or next to the exe)
+- `scripts/build-exe.js`, `scripts/exe-smoke.js`: build and end-to-end check of the exe
