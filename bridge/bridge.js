@@ -12,8 +12,9 @@ const path = require('path');
 const { spawn, execFileSync } = require('child_process');
 const P = require('./protocol');
 const { checkStops } = require('./waypoint-mcp');
+const { ROOT, isPackaged } = require('./paths');
+const { acquireLock, releaseLock } = require('./lock');
 
-const ROOT = path.resolve(__dirname, '..');
 const CONFIG_PATH = process.env.CB_CONFIG || path.join(ROOT, 'config.json');
 const STATE_PATH = process.env.CB_STATE || path.join(ROOT, 'state.json');
 const AGENT_HOME = process.env.CB_AGENT_HOME || path.join(ROOT, 'agent-home');
@@ -155,7 +156,8 @@ class Bridge {
     fs.writeFileSync(MCP_CONFIG, JSON.stringify({ mcpServers: { wow: {
       type: 'stdio',
       command: process.execPath,
-      args: [path.join(__dirname, 'waypoint-mcp.js')],
+      // As ClaudeBridge.exe there's no separate script: the exe runs the helper itself.
+      args: isPackaged ? ['--waypoint-mcp'] : [path.join(__dirname, 'waypoint-mcp.js')],
       env: { CB_WAYPOINT_FILE: WAYPOINT_FILE },
     } } }));
     const args = [
@@ -371,13 +373,30 @@ class Bridge {
   }
 }
 
-module.exports = { Bridge, SYSTEM_PROMPT, readImage };
+const lockFile = (cfg) => path.join(cfg.wowDir, 'Interface', 'AddOns', 'ClaudeBridge', 'bridge.lock');
 
-if (require.main === module) {
+// Starts the bridge for the configured WoW folder, unless one already runs there.
+// Returns false (after saying why) when it can't start.
+function main() {
   const cfg = loadJson(CONFIG_PATH, null);
   if (!cfg) {
-    console.error(`No ${CONFIG_PATH}. Run "node setup.js" first.`);
-    process.exit(1);
+    console.error(`No ${CONFIG_PATH}. Run setup first.`);
+    return false;
   }
+  const file = lockFile(cfg);
+  const holder = acquireLock(file);
+  if (holder) {
+    console.error(`A bridge is already running for ${cfg.wowDir} (process ${holder.pid}, started ${new Date(holder.startedAt).toLocaleString()}).`);
+    console.error('Two bridges would both answer every question and hang the game, so this one is not starting.');
+    return false;
+  }
+  const release = () => releaseLock(file);
+  process.on('exit', release);
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK', 'SIGHUP']) process.on(sig, () => process.exit(0));
   new Bridge(cfg).start();
+  return true;
 }
+
+module.exports = { Bridge, SYSTEM_PROMPT, readImage, main, CONFIG_PATH };
+
+if (require.main === module && !main()) process.exit(1);

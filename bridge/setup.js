@@ -11,8 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const P = require('./protocol');
-
-const ROOT = path.resolve(__dirname, '..');
+const { ROOT } = require('./paths');
 const CONFIG_PATH = process.env.CB_CONFIG || path.join(ROOT, 'config.json');
 const ADDON_SRC = path.join(ROOT, 'addon', 'ClaudeBridge');
 
@@ -33,6 +32,20 @@ function findSavedVarDirs(wowDir) {
   return fs.readdirSync(acct, { withFileTypes: true })
     .filter((d) => d.isDirectory() && d.name !== 'SavedVariables')
     .map((d) => path.join(acct, d.name, 'SavedVariables'));
+}
+
+// Where WoW: Forever usually lives, for a first run that has no config yet.
+const WOW_GUESSES = [
+  'C:\\Program Files (x86)\\World of Warcraft\\_forever_',
+  'C:\\Program Files\\World of Warcraft\\_forever_',
+  'D:\\World of Warcraft\\_forever_',
+  'D:\\Program Files (x86)\\World of Warcraft\\_forever_',
+  'D:\\Games\\World of Warcraft\\_forever_',
+  'E:\\World of Warcraft\\_forever_',
+];
+
+function findWowDir(guesses = WOW_GUESSES) {
+  return guesses.find((d) => fs.existsSync(path.join(d, 'Interface')) || fs.existsSync(path.join(d, 'WTF'))) || null;
 }
 
 function loadConfig() {
@@ -102,7 +115,7 @@ function setup(opts = {}) {
   return cfg;
 }
 
-module.exports = { setup, findSavedVarDirs };
+module.exports = { setup, findSavedVarDirs, findWowDir, parseArgs, CONFIG_PATH };
 
 if (require.main === module) {
   try {

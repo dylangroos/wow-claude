@@ -146,4 +146,4 @@ function serve(input, output, file) {
 
 if (require.main === module) serve(process.stdin, process.stdout, process.env.CB_WAYPOINT_FILE);
 
-module.exports = { TOOL, checkWaypoint, checkStops, handle };
+module.exports = { TOOL, checkWaypoint, checkStops, handle, serve };
